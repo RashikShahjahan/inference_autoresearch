@@ -1,0 +1,17 @@
+{
+  "translation_model": "mlx-community/translategemma-4b-it-4bit",
+  "source_lang_code": "bn",
+  "target_lang_code": "en",
+  "max_tokens": 2048,
+  "warmup_runs": 1,
+  "quick_repeats": 2,
+  "full_repeats": 3,
+  "max_peak_metal_mb": null,
+  "min_keep_gain_percent": 1.0,
+  "tie_memory_delta_mb": 64,
+  "quick_fixture_ids": [
+    "bn-001",
+    "bn-004",
+    "bn-007"
+  ]
+}
