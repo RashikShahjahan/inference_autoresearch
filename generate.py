@@ -1,3 +1,17 @@
+from __future__ import annotations
+
+import argparse
+import json
+
+from prepare import (
+    compare_candidate,
+    load_config,
+    load_fixtures,
+    require_memory_limit,
+    split_fixtures,
+)
+
+
 def generate_text(model, tokenizer, prompt_tokens, *, max_tokens: int):
     import mlx.core as mx
     from mlx_lm.models.cache import make_prompt_cache
@@ -40,3 +54,36 @@ def generate_text(model, tokenizer, prompt_tokens, *, max_tokens: int):
         "token_ids": generated_token_ids,
         "text": tokenizer.decode(generated_token_ids).strip(),
     }
+
+
+def build_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(
+        description="Benchmark the current generate.py candidate"
+    )
+    parser.add_argument("--full", action="store_true", help="Use the full fixture set")
+    parser.add_argument(
+        "--description",
+        default="manual run",
+        help="Short description of the candidate change",
+    )
+    return parser
+
+
+def main() -> int:
+    parser = build_parser()
+    args = parser.parse_args()
+
+    config = load_config()
+    fixtures = load_fixtures()
+    quick_fixtures, full_fixtures = split_fixtures(config, fixtures)
+    require_memory_limit(config)
+
+    mode = "full" if args.full else "quick"
+    selected_fixtures = full_fixtures if args.full else quick_fixtures
+    result = compare_candidate(config, mode, selected_fixtures, args.description)
+    print(json.dumps(result, indent=2))
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

@@ -1,8 +1,8 @@
 {
-  "translation_model": "mlx-community/translategemma-4b-it-4bit",
-  "source_lang_code": "bn",
-  "target_lang_code": "en",
-  "max_tokens": 2048,
+  "model": "mlx-community/translategemma-4b-it-4bit",
+  "source_lang": "bn",
+  "target_lang": "en",
+  "max_new_tokens": 2048,
   "warmup_runs": 1,
   "quick_repeats": 2,
   "full_repeats": 3,

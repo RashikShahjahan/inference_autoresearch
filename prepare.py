@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import argparse
 import csv
 import hashlib
 import importlib.util
@@ -17,18 +18,17 @@ RESULTS_PATH = ROOT / "results.tsv"
 RUNS_DIR = ROOT / "runs"
 STATE_DIR = ROOT / "state"
 REFERENCE_OUTPUTS_PATH = STATE_DIR / "reference_outputs.json"
-BEST_RUNTIME_PATH = STATE_DIR / "best_runtime.py"
+BEST_GENERATE_PATH = STATE_DIR / "best_generate.py"
 BEST_METRICS_PATH = STATE_DIR / "best_metrics.json"
-BASELINE_PATH = ROOT / "baseline.py"
-RUNTIME_PATH = ROOT / "runtime.py"
+GENERATE_PATH = ROOT / "generate.py"
 
 
 @dataclass(frozen=True)
 class Config:
-    translation_model: str
-    source_lang_code: str
-    target_lang_code: str
-    max_tokens: int
+    model: str
+    source_lang: str
+    target_lang: str
+    max_new_tokens: int
     warmup_runs: int
     quick_repeats: int
     full_repeats: int
@@ -51,10 +51,10 @@ def load_config() -> Config:
     if max_peak_metal_mb is not None:
         max_peak_metal_mb = float(max_peak_metal_mb)
     return Config(
-        translation_model=str(payload["translation_model"]),
-        source_lang_code=str(payload["source_lang_code"]),
-        target_lang_code=str(payload["target_lang_code"]),
-        max_tokens=int(payload["max_tokens"]),
+        model=str(payload["model"]),
+        source_lang=str(payload["source_lang"]),
+        target_lang=str(payload["target_lang"]),
+        max_new_tokens=int(payload["max_new_tokens"]),
         warmup_runs=int(payload["warmup_runs"]),
         quick_repeats=int(payload["quick_repeats"]),
         full_repeats=int(payload["full_repeats"]),
@@ -179,7 +179,7 @@ def load_module_from_path(path: Path, module_name: str):
 def load_model_and_tokenizer(config: Config):
     from mlx_lm import load
 
-    model, tokenizer = load(config.translation_model)
+    model, tokenizer = load(config.model)
     tokenizer.add_eos_token("<end_of_turn>")
     return model, tokenizer
 
@@ -191,8 +191,8 @@ def build_prompt(tokenizer, config: Config, source_text: str):
             "content": [
                 {
                     "type": "text",
-                    "source_lang_code": config.source_lang_code,
-                    "target_lang_code": config.target_lang_code,
+                    "source_lang_code": config.source_lang,
+                    "target_lang_code": config.target_lang,
                     "text": source_text.strip(),
                 }
             ],
@@ -202,12 +202,14 @@ def build_prompt(tokenizer, config: Config, source_text: str):
 
 
 def max_tokens_for_fixture(config: Config, fixture: Fixture) -> int:
-    return fixture.max_tokens if fixture.max_tokens is not None else config.max_tokens
+    return (
+        fixture.max_tokens if fixture.max_tokens is not None else config.max_new_tokens
+    )
 
 
-def generate_references(config: Config, fixtures: list[Fixture]):
+def generate_references(config: Config, fixtures: list[Fixture], module_path: Path):
     model, tokenizer = load_model_and_tokenizer(config)
-    baseline = load_module_from_path(BASELINE_PATH, "generate_autoresearch_baseline")
+    baseline = load_module_from_path(module_path, f"reference_{time.time_ns()}")
     outputs: dict[str, dict] = {}
     for fixture in fixtures:
         prompt_tokens = build_prompt(tokenizer, config, fixture.source_text)
@@ -343,9 +345,9 @@ def save_run_artifact(run_identifier: str, payload: dict):
     )
 
 
-def promote_runtime(metrics: dict):
+def promote_generate(metrics: dict):
     STATE_DIR.mkdir(parents=True, exist_ok=True)
-    shutil.copy2(RUNTIME_PATH, BEST_RUNTIME_PATH)
+    shutil.copy2(GENERATE_PATH, BEST_GENERATE_PATH)
     BEST_METRICS_PATH.write_text(
         json.dumps(metrics, ensure_ascii=False, indent=2) + "\n",
         encoding="utf-8",
@@ -359,19 +361,19 @@ def load_best_metrics() -> dict:
 
 
 def incumbent_path() -> Path:
-    if not BEST_RUNTIME_PATH.exists():
-        raise ValueError("Best runtime missing. Run setup first.")
-    return BEST_RUNTIME_PATH
+    if not BEST_GENERATE_PATH.exists():
+        raise ValueError("Best generate snapshot missing. Run setup first.")
+    return BEST_GENERATE_PATH
 
 
-def reset_runtime_from_incumbent():
-    shutil.copy2(incumbent_path(), RUNTIME_PATH)
+def reset_generate_from_incumbent():
+    shutil.copy2(incumbent_path(), GENERATE_PATH)
 
 
 def compare_candidate(
     config: Config, mode: str, fixtures: list[Fixture], description: str
 ):
-    candidate_metrics = benchmark_module(RUNTIME_PATH, mode, config, fixtures)
+    candidate_metrics = benchmark_module(GENERATE_PATH, mode, config, fixtures)
     incumbent_metrics = benchmark_module(incumbent_path(), mode, config, fixtures)
     run_identifier = run_id()
 
@@ -383,7 +385,7 @@ def compare_candidate(
         decision_reason = "memory_limit_exceeded"
     elif not incumbent_metrics["ok"]:
         raise RuntimeError(
-            "Incumbent runtime failed benchmark; reset the sandbox state"
+            "Incumbent generate.py failed benchmark; reset the sandbox state"
         )
     else:
         incumbent_tps = float(incumbent_metrics["output_tokens_per_sec"])
@@ -401,7 +403,7 @@ def compare_candidate(
             if mode == "full":
                 status = "promoted"
                 decision_reason = f"throughput_gain_{gain_percent:.2f}_percent"
-                promote_runtime(candidate_metrics)
+                promote_generate(candidate_metrics)
             else:
                 status = "trial"
                 decision_reason = f"quick_win_{gain_percent:.2f}_percent"
@@ -412,7 +414,7 @@ def compare_candidate(
             if mode == "full":
                 status = "promoted"
                 decision_reason = f"memory_win_{memory_delta_mb:.1f}_mb"
-                promote_runtime(candidate_metrics)
+                promote_generate(candidate_metrics)
             else:
                 status = "trial"
                 decision_reason = f"quick_memory_win_{memory_delta_mb:.1f}_mb"
@@ -441,7 +443,7 @@ def compare_candidate(
         [
             run_identifier,
             mode,
-            candidate_hash(RUNTIME_PATH),
+            candidate_hash(GENERATE_PATH),
             f"{float(output_tokens_per_sec):.4f}",
             f"{float(peak_metal_mb):.1f}",
             status,
@@ -455,12 +457,12 @@ def initialize_state(config: Config, fixtures: list[Fixture]):
     STATE_DIR.mkdir(parents=True, exist_ok=True)
     RUNS_DIR.mkdir(parents=True, exist_ok=True)
     ensure_results_header()
-    generate_references(config, fixtures)
-    baseline_metrics = benchmark_module(BASELINE_PATH, "full", config, fixtures)
+    shutil.copy2(GENERATE_PATH, BEST_GENERATE_PATH)
+    generate_references(config, fixtures, BEST_GENERATE_PATH)
+    baseline_metrics = benchmark_module(BEST_GENERATE_PATH, "full", config, fixtures)
     if not baseline_metrics["ok"]:
         raise RuntimeError(f"Baseline setup failed: {baseline_metrics}")
-    shutil.copy2(BASELINE_PATH, BEST_RUNTIME_PATH)
-    shutil.copy2(BASELINE_PATH, RUNTIME_PATH)
+    shutil.copy2(BEST_GENERATE_PATH, GENERATE_PATH)
     BEST_METRICS_PATH.write_text(
         json.dumps(baseline_metrics, ensure_ascii=False, indent=2) + "\n",
         encoding="utf-8",
@@ -469,7 +471,7 @@ def initialize_state(config: Config, fixtures: list[Fixture]):
         [
             run_id(),
             "full",
-            candidate_hash(BASELINE_PATH),
+            candidate_hash(BEST_GENERATE_PATH),
             f"{float(baseline_metrics['output_tokens_per_sec']):.4f}",
             f"{float(baseline_metrics['peak_metal_mb']):.1f}",
             "promoted",
@@ -484,3 +486,82 @@ def recent_results(limit: int = 10) -> list[str]:
         return []
     lines = RESULTS_PATH.read_text(encoding="utf-8").splitlines()
     return lines[-limit:]
+
+
+def build_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(
+        description="Manage the generate autoresearch sandbox"
+    )
+    subparsers = parser.add_subparsers(dest="command", required=True)
+    subparsers.add_parser(
+        "setup", help="Initialize reference outputs and incumbent state"
+    )
+    subparsers.add_parser(
+        "reset", help="Restore generate.py from the incumbent snapshot"
+    )
+    subparsers.add_parser(
+        "status", help="Show the current incumbent and recent run history"
+    )
+    return parser
+
+
+def main() -> int:
+    parser = build_parser()
+    args = parser.parse_args()
+
+    config = load_config()
+    fixtures = load_fixtures()
+    _, full_fixtures = split_fixtures(config, fixtures)
+
+    if args.command == "setup":
+        require_memory_limit(config)
+        baseline_metrics = initialize_state(config, full_fixtures)
+        print(
+            json.dumps(
+                {"status": "initialized", "baseline": baseline_metrics}, indent=2
+            )
+        )
+        return 0
+
+    if args.command == "reset":
+        try:
+            reset_generate_from_incumbent()
+            generate_source = str(incumbent_path())
+        except ValueError as exc:
+            print(json.dumps({"status": "error", "message": str(exc)}, indent=2))
+            return 1
+        print(
+            json.dumps(
+                {"status": "reset", "generate_source": generate_source}, indent=2
+            )
+        )
+        return 0
+
+    if args.command == "status":
+        try:
+            best_metrics = load_best_metrics()
+        except ValueError as exc:
+            print(
+                json.dumps(
+                    {
+                        "status": "not_initialized",
+                        "message": str(exc),
+                        "recent_results": recent_results(),
+                    },
+                    indent=2,
+                )
+            )
+            return 0
+        payload = {
+            "best_metrics": best_metrics,
+            "recent_results": recent_results(),
+        }
+        print(json.dumps(payload, indent=2))
+        return 0
+
+    parser.error(f"Unknown command: {args.command}")
+    return 1
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

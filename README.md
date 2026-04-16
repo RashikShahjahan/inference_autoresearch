@@ -1,60 +1,91 @@
-# Generate Autoresearch
+# autoresearch
 
-This directory is a self-contained sandbox for translation generate-path research on MLX.
+This repo is a small sandbox for autonomous inference-path research on MLX.
+
+The idea: give an agent a fixed translation benchmark and a single mutable `generate.py`, let it try generate-path changes, measure throughput, and keep only the changes that beat the incumbent under the real contract.
 
 Scope:
 - language pair: `bn -> en`
 - default model: `mlx-community/translategemma-4b-it-4bit`
 - objective: maximize `output_tokens_per_sec`
 - hard constraint: stay under a configurable peak Metal memory ceiling
-- correctness: candidate output tokens must match the frozen baseline exactly
+- correctness: candidate output token ids must match the frozen reference exactly
 
-Rules:
-- Do not import code from `src/`
-- Do not edit files outside `generate_autoresearch/`
-- During research, only `runtime.py` should change
+The layout intentionally mirrors the minimal shape of `karpathy/autoresearch`, but for inference instead of training.
 
-## Files
+## How it works
 
-- `baseline.py`: frozen reference generate implementation
-- `runtime.py`: mutable candidate implementation
-- `harness.py`: fixed benchmark, scoring, and MLX utilities
-- `run.py`: CLI for setup/eval/reset/status
-- `program.md`: lightweight instructions for an autonomous coding agent
-- `fixtures/benchmark.jsonl`: checked-in Bangla benchmark prompts
+The repo is deliberately small and only really has three top-level files that matter:
 
-## Commands
+- `prepare.py` — fixed benchmark contract, setup, reference generation, and state management. Do not modify during research.
+- `generate.py` — the single file the agent edits. It contains the mutable generate-path implementation.
+- `program.md` — instructions for the autonomous coding agent.
 
-Set up the sandbox first:
+Supporting files:
+
+- `config.json` — benchmark contract and memory ceiling
+- `fixtures/benchmark.jsonl` — checked-in Bangla prompts
+- `state/` — incumbent snapshot and frozen reference outputs
+- `runs/` — per-run JSON artifacts
+- `results.tsv` — append-only run log
+
+## Quick start
+
+Set the peak Metal memory ceiling in `config.json`, then initialize the sandbox:
 
 ```bash
-uv run python generate_autoresearch/run.py setup
+uv run prepare.py setup
 ```
 
-Run a quick comparison on the configured subset:
+Run a quick benchmark on the configured subset:
 
 ```bash
-uv run python generate_autoresearch/run.py eval --description "trial change"
+uv run generate.py --description "trial change"
 ```
 
 Run the full benchmark. Only full runs can promote a new incumbent:
 
 ```bash
-uv run python generate_autoresearch/run.py eval --full --description "candidate change"
+uv run generate.py --full --description "candidate change"
 ```
 
-Restore `runtime.py` from the current incumbent snapshot:
+Restore `generate.py` from the current incumbent snapshot:
 
 ```bash
-uv run python generate_autoresearch/run.py reset
+uv run prepare.py reset
 ```
 
 Show the current incumbent and recent results:
 
 ```bash
-uv run python generate_autoresearch/run.py status
+uv run prepare.py status
 ```
+
+## Project structure
+
+```text
+prepare.py      fixed benchmark setup and utilities
+generate.py     mutable generate-path candidate
+program.md      agent instructions
+config.json     benchmark contract
+fixtures/       benchmark prompts
+```
+
+## Design choices
+
+- Single mutable file. The agent only edits `generate.py`.
+- Fixed correctness contract. Candidate token ids must match the frozen reference outputs exactly.
+- Fixed harness. Benchmarking, setup, logging, and incumbent promotion live in `prepare.py`.
+- Inference-specific. This repo optimizes generate-path throughput, not model quality.
 
 ## Config
 
-`config.json` controls the benchmark contract. `max_peak_metal_mb` is required and must be set before `setup` or `eval` will run.
+`config.json` controls the benchmark contract. The main fields are:
+
+- `model`
+- `source_lang`
+- `target_lang`
+- `max_new_tokens`
+- `max_peak_metal_mb`
+
+`max_peak_metal_mb` must be set before `setup` or benchmark runs will execute.

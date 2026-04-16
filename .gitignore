@@ -1,4 +1,6 @@
+__pycache__/
+*.py[oc]
+.venv/
 results.tsv
 state/
 runs/
-__pycache__/
