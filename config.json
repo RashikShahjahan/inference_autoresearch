@@ -6,7 +6,7 @@
   "warmup_runs": 1,
   "quick_repeats": 2,
   "full_repeats": 3,
-  "max_peak_metal_mb": null,
+  "max_peak_metal_mb": 12000,
   "min_keep_gain_percent": 1.0,
   "tie_memory_delta_mb": 64,
   "quick_fixture_ids": [

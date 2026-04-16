@@ -221,7 +221,6 @@ def generate_references(config: Config, fixtures: list[Fixture], module_path: Pa
         )
         outputs[fixture.fixture_id] = {
             "token_ids": [int(token) for token in result["token_ids"]],
-            "text": str(result["text"]),
         }
     STATE_DIR.mkdir(parents=True, exist_ok=True)
     REFERENCE_OUTPUTS_PATH.write_text(
@@ -245,7 +244,6 @@ def _run_once(
     references: dict[str, dict],
 ):
     total_output_tokens = 0
-    outputs: dict[str, dict] = {}
     for fixture in fixtures:
         prompt_tokens = build_prompt(tokenizer, config, fixture.source_text)
         result = module.generate_text(
@@ -265,14 +263,9 @@ def _run_once(
                 "actual_token_count": len(token_ids),
             }
         total_output_tokens += len(token_ids)
-        outputs[fixture.fixture_id] = {
-            "token_ids": token_ids,
-            "text": str(result["text"]),
-        }
     return {
         "ok": True,
         "total_output_tokens": total_output_tokens,
-        "outputs": outputs,
     }
 
 
