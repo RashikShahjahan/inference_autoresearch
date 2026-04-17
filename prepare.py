@@ -280,29 +280,40 @@ def generate_fixture_outputs(
     return outputs
 
 
-def generate_references(config: Config, fixtures: list[Fixture], module_path: Path):
+def generate_references(
+    config: Config,
+    quick_fixtures: list[Fixture],
+    full_fixtures: list[Fixture],
+    module_path: Path,
+):
     model, tokenizer = load_model_and_tokenizer(config)
     baseline = load_module_from_path(module_path, f"reference_{time.time_ns()}")
-    generated_outputs = generate_fixture_outputs(
-        baseline, model, tokenizer, config, fixtures
-    )
-    outputs: dict[str, dict] = {}
-    for fixture in fixtures:
-        result = generated_outputs[fixture.fixture_id]
-        outputs[fixture.fixture_id] = {
-            "token_ids": [int(token) for token in result["token_ids"]],
-        }
+    outputs_by_mode: dict[str, dict[str, dict[str, list[int]]]] = {}
+    for mode, fixtures in (("quick", quick_fixtures), ("full", full_fixtures)):
+        generated_outputs = generate_fixture_outputs(
+            baseline, model, tokenizer, config, fixtures
+        )
+        outputs: dict[str, dict[str, list[int]]] = {}
+        for fixture in fixtures:
+            result = generated_outputs[fixture.fixture_id]
+            outputs[fixture.fixture_id] = {
+                "token_ids": [int(token) for token in result["token_ids"]],
+            }
+        outputs_by_mode[mode] = outputs
     STATE_DIR.mkdir(parents=True, exist_ok=True)
     REFERENCE_OUTPUTS_PATH.write_text(
-        json.dumps(outputs, ensure_ascii=False, indent=2) + "\n",
+        json.dumps(outputs_by_mode, ensure_ascii=False, indent=2) + "\n",
         encoding="utf-8",
     )
 
 
-def load_reference_outputs() -> dict[str, dict]:
+def load_reference_outputs(mode: str) -> dict[str, dict]:
     if not REFERENCE_OUTPUTS_PATH.exists():
         raise ValueError("Reference outputs missing. Run setup first.")
-    return json.loads(REFERENCE_OUTPUTS_PATH.read_text(encoding="utf-8"))
+    payload = json.loads(REFERENCE_OUTPUTS_PATH.read_text(encoding="utf-8"))
+    if mode in payload:
+        return payload[mode]
+    return payload
 
 
 def _run_once(
@@ -340,7 +351,7 @@ def benchmark_module(
     module_path: Path, mode: str, config: Config, fixtures: list[Fixture]
 ):
     repeats = config.quick_repeats if mode == "quick" else config.full_repeats
-    references = load_reference_outputs()
+    references = load_reference_outputs(mode)
     model, tokenizer = load_model_and_tokenizer(config)
     module = load_module_from_path(module_path, f"candidate_{time.time_ns()}")
 
@@ -513,13 +524,17 @@ def compare_candidate(
     return artifact
 
 
-def initialize_state(config: Config, fixtures: list[Fixture]):
+def initialize_state(
+    config: Config, quick_fixtures: list[Fixture], full_fixtures: list[Fixture]
+):
     STATE_DIR.mkdir(parents=True, exist_ok=True)
     RUNS_DIR.mkdir(parents=True, exist_ok=True)
     ensure_results_header()
     shutil.copy2(GENERATE_PATH, BEST_GENERATE_PATH)
-    generate_references(config, fixtures, BEST_GENERATE_PATH)
-    baseline_metrics = benchmark_module(BEST_GENERATE_PATH, "full", config, fixtures)
+    generate_references(config, quick_fixtures, full_fixtures, BEST_GENERATE_PATH)
+    baseline_metrics = benchmark_module(
+        BEST_GENERATE_PATH, "full", config, full_fixtures
+    )
     if not baseline_metrics["ok"]:
         raise RuntimeError(f"Baseline setup failed: {baseline_metrics}")
     shutil.copy2(BEST_GENERATE_PATH, GENERATE_PATH)
@@ -571,11 +586,11 @@ def main() -> int:
 
     config = load_config()
     fixtures = load_fixtures()
-    _, full_fixtures = split_fixtures(config, fixtures)
+    quick_fixtures, full_fixtures = split_fixtures(config, fixtures)
 
     if args.command == "setup":
         require_memory_limit(config)
-        baseline_metrics = initialize_state(config, full_fixtures)
+        baseline_metrics = initialize_state(config, quick_fixtures, full_fixtures)
         print(
             json.dumps(
                 {"status": "initialized", "baseline": baseline_metrics}, indent=2
