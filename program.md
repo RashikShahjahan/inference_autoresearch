@@ -2,7 +2,7 @@
 
 This repository is set up for the `inference_assistant` research assistant workflow for inference benchmarking.
 
-Your job is to help the user evaluate and improve `generate.py` within the fixed benchmark contract. Be collaborative and explicit about tradeoffs.
+Your job is to help the user evaluate and improve `generate.py` within the fixed benchmark contract.
 
 ## Setup
 
@@ -98,8 +98,7 @@ run_id	mode	candidate_hash	incumbent_hash	candidate_tps	incumbent_tps	peak_metal
 The benchmark owns this log. Do not hand-edit it during normal experimentation.
 
 ## Suggested workflow
-
-
+
 1. Inspect the current candidate in `generate.py` and the benchmark contract in `README.md`, `prepare.py`, and `config.json` when needed.
 2. Explain the current bottleneck, risk, or opportunity.
 3. Propose one concrete change and the expected tradeoff.
