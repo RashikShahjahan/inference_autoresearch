@@ -12,7 +12,7 @@ from pathlib import Path
 
 
 ROOT = Path(__file__).resolve().parent
-FIXTURES_PATH = ROOT / "fixtures" / "benchmark.jsonl"
+DATASET_CACHE_DIR = ROOT / ".cache" / "huggingface"
 CONFIG_PATH = ROOT / "config.json"
 RESULTS_PATH = ROOT / "results.tsv"
 RUNS_DIR = ROOT / "runs"
@@ -28,6 +28,11 @@ class Config:
     model: str
     source_lang: str
     target_lang: str
+    dataset_repo: str
+    dataset_file: str
+    dataset_text_field: str
+    dataset_fixture_limit: int
+    dataset_skip_bad_source: bool
     max_new_tokens: int
     warmup_runs: int
     quick_repeats: int
@@ -54,6 +59,11 @@ def load_config() -> Config:
         model=str(payload["model"]),
         source_lang=str(payload["source_lang"]),
         target_lang=str(payload["target_lang"]),
+        dataset_repo=str(payload["dataset_repo"]),
+        dataset_file=str(payload["dataset_file"]),
+        dataset_text_field=str(payload["dataset_text_field"]),
+        dataset_fixture_limit=int(payload["dataset_fixture_limit"]),
+        dataset_skip_bad_source=bool(payload["dataset_skip_bad_source"]),
         max_new_tokens=int(payload["max_new_tokens"]),
         warmup_runs=int(payload["warmup_runs"]),
         quick_repeats=int(payload["quick_repeats"]),
@@ -71,16 +81,32 @@ def require_memory_limit(config: Config):
 
 
 def load_fixtures() -> list[Fixture]:
+    from huggingface_hub import hf_hub_download
+
+    config = load_config()
+    dataset_path = Path(
+        hf_hub_download(
+            repo_id=config.dataset_repo,
+            filename=config.dataset_file,
+            repo_type="dataset",
+            cache_dir=DATASET_CACHE_DIR,
+        )
+    )
     fixtures: list[Fixture] = []
     seen_ids: set[str] = set()
     for line_number, raw_line in enumerate(
-        FIXTURES_PATH.read_text(encoding="utf-8").splitlines(), start=1
+        dataset_path.read_text(encoding="utf-8").splitlines(), start=1
     ):
         line = raw_line.strip()
         if not line:
             continue
         payload = json.loads(line)
-        fixture_id = str(payload["id"])
+        if config.dataset_skip_bad_source and payload.get("is_bad_source"):
+            continue
+        source_text = str(payload.get(config.dataset_text_field, "")).strip()
+        if not source_text:
+            continue
+        fixture_id = dataset_fixture_id(payload, line_number)
         if fixture_id in seen_ids:
             raise ValueError(
                 f"Duplicate fixture id at line {line_number}: {fixture_id}"
@@ -89,17 +115,24 @@ def load_fixtures() -> list[Fixture]:
         fixtures.append(
             Fixture(
                 fixture_id=fixture_id,
-                source_text=str(payload["source_text"]),
-                max_tokens=(
-                    int(payload["max_tokens"])
-                    if payload.get("max_tokens") is not None
-                    else None
-                ),
+                source_text=source_text,
             )
         )
+        if len(fixtures) >= config.dataset_fixture_limit:
+            break
     if not fixtures:
-        raise ValueError(f"No fixtures found in {FIXTURES_PATH}")
+        raise ValueError(
+            f"No usable fixtures found in {config.dataset_repo}/{config.dataset_file}"
+        )
     return fixtures
+
+
+def dataset_fixture_id(payload: dict, line_number: int) -> str:
+    lp = str(payload.get("lp") or "row")
+    segment_id = payload.get("segment_id")
+    if segment_id is None:
+        return f"{lp}-{line_number:04d}"
+    return f"{lp}-{int(segment_id):04d}"
 
 
 def split_fixtures(

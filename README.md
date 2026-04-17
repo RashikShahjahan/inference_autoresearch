@@ -5,7 +5,7 @@ This repo is a small sandbox for autonomous inference-path research on MLX.
 The idea: give an agent a fixed translation benchmark and a single mutable `generate.py`, let it try generate-path changes, measure throughput, and keep only the changes that beat the incumbent under the real contract.
 
 Scope:
-- language pair: `bn -> en`
+- language pair: `bn -> en` using Bengali target text from `google/wmt24pp`
 - default model: `mlx-community/translategemma-4b-it-4bit`
 - objective: maximize `output_tokens_per_sec`
 - hard constraint: stay under a configurable peak Metal memory ceiling
@@ -23,8 +23,8 @@ The repo is deliberately small and only really has three top-level files that ma
 
 Supporting files:
 
-- `config.json` — benchmark contract and memory ceiling
-- `fixtures/benchmark.jsonl` — checked-in Bangla prompts
+- `config.json` — benchmark contract, dataset selection, and memory ceiling
+- Hugging Face dataset `google/wmt24pp`, file `en-bn_IN.jsonl`
 - `state/` — incumbent snapshot and frozen reference outputs
 - `runs/` — per-run JSON artifacts
 - `results.tsv` — append-only run log
@@ -67,8 +67,7 @@ uv run prepare.py status
 prepare.py      fixed benchmark setup and utilities
 generate.py     mutable generate-path candidate
 program.md      agent instructions
-config.json     benchmark contract
-fixtures/       benchmark prompts
+config.json     benchmark contract and dataset selection
 ```
 
 ## Design choices
@@ -85,6 +84,11 @@ fixtures/       benchmark prompts
 - `model`
 - `source_lang`
 - `target_lang`
+- `dataset_repo`
+- `dataset_file`
+- `dataset_text_field`
+- `dataset_fixture_limit`
+- `dataset_skip_bad_source`
 - `max_new_tokens`
 - `max_peak_metal_mb`
 

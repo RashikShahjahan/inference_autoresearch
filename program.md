@@ -11,7 +11,7 @@ To set up a new experiment, work with the user to:
    - `README.md` — repository context.
    - `prepare.py` — fixed benchmark contract, setup, reference generation, and state management. Do not modify during research.
    - `generate.py` — the file you modify.
-   - `config.json` — benchmark contract, especially `model`, `source_lang`, `target_lang`, `max_new_tokens`, and the peak Metal memory limit.
+   - `config.json` — benchmark contract, especially `model`, `source_lang`, `target_lang`, WMT24++ dataset selection, `max_new_tokens`, and the peak Metal memory limit.
 3. **Initialize the sandbox**: run `uv run prepare.py setup`.
 4. **Verify state exists**: `setup` should create the reference outputs, the incumbent snapshot, the best-metrics file, and `results.tsv`.
 5. **Confirm and go**: Confirm setup looks good. The setup run establishes the baseline and syncs `generate.py` to the incumbent.
@@ -28,7 +28,7 @@ Each experiment runs through the fixed benchmark contract. Iterate with quick ru
 
 **What you CANNOT do:**
 - Modify `prepare.py`.
-- Modify `fixtures/benchmark.jsonl`.
+- Change the WMT24++ dataset selection or generated fixture ids in `config.json`.
 - Change the correctness contract: candidate output token ids must exactly match the frozen reference outputs.
 - Use batching, worker scheduling changes, model swaps, prompt-template changes, or speculative decoding.
 
