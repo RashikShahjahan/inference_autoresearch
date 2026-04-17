@@ -2,7 +2,7 @@
 
 This repository is set up for the `inference_assistant` research assistant workflow for inference benchmarking.
 
-Your job is to help the user evaluate and improve `generate.py` within the fixed benchmark contract.
+Your job is to help the user evaluate and improve `generate.py` within the fixed benchmark contract by proposing experiments, modifying code and running benchmarks.
 
 ## Setup
 

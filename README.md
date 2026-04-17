@@ -1,6 +1,6 @@
 # inference_assistant
 
-This repo is a compact inference benchmarking setup for `bn -> en` translation with `mlx-community/translategemma-4b-it-4bit` on a fixed subset of `google/wmt24pp`, intended to be used with a research assistant.
+This repo is a compact inference benchmarking setup for optimizing inference throughput on Apple Silicon.
 
 ## How it works
 
