@@ -1,6 +1,6 @@
-# autoresearch
+# inference_assistant
 
-This repo is an inference-oriented take on the minimal `karpathy/autoresearch` setup, adapted for `bn -> en` translation with `mlx-community/translategemma-4b-it-4bit` on a fixed subset of `google/wmt24pp`.
+This repo is a compact inference benchmarking setup for `bn -> en` translation with `mlx-community/translategemma-4b-it-4bit` on a fixed subset of `google/wmt24pp`, intended to be used with a research assistant.
 
 ## How it works
 
@@ -38,7 +38,7 @@ uv run generate.py --full --description "candidate change"
 ```text
 prepare.py      - fixed benchmark setup, incumbent snapshot, and logging
 generate.py     - mutable batched generate-path candidate
-program.md      - agent instructions
+program.md      - research assistant instructions
 config.json     - benchmark contract and dataset selection
 pyproject.toml  - dependencies
 state/          - incumbent snapshot

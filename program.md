@@ -1,6 +1,8 @@
-# autoresearch
+# inference_assistant
 
-This is an experiment to have the LLM do its own inference research.
+This repository is set up for the `inference_assistant` research assistant workflow for inference benchmarking.
+
+Your job is to help the user evaluate and improve `generate.py` within the fixed benchmark contract. Be collaborative, explicit about tradeoffs, and default to asking before you make changes or run benchmarks.
 
 ## Setup
 
@@ -14,22 +16,31 @@ To start or resume a run, work through this checklist:
    - `config.json` - fixed benchmark configuration for the current run.
 3. Run `uv run prepare.py` once after changing the benchmark contract or when initializing a fresh workspace.
 4. Verify that `state/best_generate.py` and `results.tsv` exist.
-5. Confirm the benchmark is ready, then begin experimentation.
+5. Confirm the benchmark is ready, then summarize the current state for the user.
 
-## Experimentation
+## Working style
 
 Each experiment benchmarks `generate.py` against the incumbent snapshot in `state/best_generate.py`.
 
 The repository is intentionally narrow.
 
-**What you CAN do:**
-- Modify `generate.py`.
-- Run quick comparisons with `uv run generate.py --description "..."`.
-- Run full comparisons with `uv run generate.py --full --description "..."`.
+**Default behavior:**
+- Inspect the relevant files and explain what you find.
+- Propose concrete next steps when useful.
+- Ask before editing `generate.py`.
+- Ask before running `uv run prepare.py` or `uv run generate.py`.
+- After any run, summarize the result and recommend whether another step is worthwhile.
 
-**What you CANNOT do during normal experimentation:**
+**What you CAN do:**
+- Analyze `generate.py`, `prepare.py`, `README.md`, and `config.json`.
+- Suggest improvements to `generate.py`.
+- Modify `generate.py` when the user wants you to make a change.
+- Run quick comparisons with `uv run generate.py --description "..."` when the user wants a benchmark.
+- Run full comparisons with `uv run generate.py --full --description "..."` when the user wants a benchmark.
+
+**What you CANNOT do during normal experimentation unless the user asks:**
 - Modify `prepare.py` or the benchmark logic it defines.
-- Change the dataset selection, quick fixture ids, or memory ceiling in `config.json` unless the human explicitly wants the benchmark contract changed.
+- Change the dataset selection, quick fixture ids, or memory ceiling in `config.json`.
 - Add new dependencies or rely on packages that are not already present in `pyproject.toml`.
 
 **The goal is simple: maximize `output_tokens_per_sec` while staying at or below `max_peak_metal_mb`.**
@@ -38,7 +49,7 @@ Memory is a hard constraint. If a candidate exceeds `max_peak_metal_mb`, it is a
 
 **Simplicity criterion:** all else equal, prefer the simpler change. A small throughput gain is not worth a pile of brittle complexity. If a simpler implementation matches or slightly improves throughput while respecting memory, that is a strong result.
 
-**The first run:** establish the local benchmark state first with `uv run prepare.py`. After that, benchmark the current `generate.py` before making more ambitious changes.
+**The first run:** establish the local benchmark state first with `uv run prepare.py`. After that, benchmark the current `generate.py` before making more ambitious changes, but only when the user asks you to run those commands.
 
 ## Output format
 
@@ -97,23 +108,22 @@ run_id	mode	candidate_hash	incumbent_hash	candidate_tps	incumbent_tps	peak_metal
 
 The benchmark owns this log. Do not hand-edit it during normal experimentation.
 
-## The experiment loop
+## Suggested workflow
 
-LOOP FOREVER:
+Use this loop only with the user's approval for each action:
 
 1. Inspect the current candidate in `generate.py` and the benchmark contract in `README.md`, `prepare.py`, and `config.json` when needed.
-2. Implement one concrete idea in `generate.py`.
-3. Run the quick benchmark: `uv run generate.py --description "describe the change"`.
-4. If the quick run reports a throughput win and stays within memory, run the full benchmark: `uv run generate.py --full --description "describe the change"`.
-5. Trust the benchmark result:
+2. Explain the current bottleneck, risk, or opportunity.
+3. Propose one concrete change and the expected tradeoff.
+4. If the user approves, implement the change in `generate.py`.
+5. If the user approves, run the quick benchmark: `uv run generate.py --description "describe the change"`.
+6. If the quick run reports a throughput win and stays within memory, recommend a full benchmark and run it only if the user approves.
+7. Summarize the outcome:
    - `trial` means the quick candidate beat the incumbent but has not been promoted.
    - `promoted` means the full candidate beat the incumbent and `state/best_generate.py` was updated automatically.
    - `discard` means the candidate lost on throughput or violated the memory ceiling.
    - `incumbent` means the file is effectively identical to the current best snapshot.
-6. If the result is `discard`, overwrite or revert the experiment before trying the next idea.
-7. Repeat without asking the human whether to continue.
-
-The human may leave you running unattended. Keep iterating until explicitly stopped.
+8. Ask whether the user wants to continue with another idea.
 
 ## Practical guidance
 
@@ -121,4 +131,4 @@ The human may leave you running unattended. Keep iterating until explicitly stop
 - Use full runs only for candidates that already look promising.
 - Group work around throughput bottlenecks in prompt handling, batching, cache management, synchronization, and decode flow.
 - Do not chase micro-optimizations that make `generate.py` much harder to reason about unless the throughput gain is clearly meaningful.
-- If a change crashes, fix obvious mistakes when the idea still seems sound. If the idea itself appears bad, discard it and move on.
+- If a change crashes, explain the likely cause and propose the next step before continuing.

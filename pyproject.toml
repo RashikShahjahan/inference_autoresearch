@@ -1,7 +1,7 @@
 [project]
-name = "inference-autoresearch"
+name = "inference_assistant"
 version = "0.1.0"
-description = "Autonomous inference-path benchmarking on MLX"
+description = "Research assistant workflow for inference-path benchmarking on MLX"
 readme = "README.md"
 requires-python = ">=3.10"
 dependencies = [
