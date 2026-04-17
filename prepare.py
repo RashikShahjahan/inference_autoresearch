@@ -5,6 +5,7 @@ import hashlib
 import importlib.util
 import json
 import shutil
+import sys
 import time
 from dataclasses import dataclass
 from pathlib import Path
@@ -250,6 +251,7 @@ def load_module_from_path(path: Path, module_name: str):
     if spec is None or spec.loader is None:
         raise ImportError(f"Unable to import module from {path}")
     module = importlib.util.module_from_spec(spec)
+    sys.modules[module_name] = module
     spec.loader.exec_module(module)
     return module
 

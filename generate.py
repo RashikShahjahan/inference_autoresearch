@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import argparse
 import contextlib
-import copy
 import json
 import time
 from collections import deque
@@ -223,26 +222,23 @@ class PromptProcessingBatch:
         self.max_tokens.extend(batch.max_tokens)
         self.state_machines.extend(batch.state_machines)
 
-    def _copy(self):
-        new_batch = self.__class__.__new__(self.__class__)
-        new_batch.model = self.model
-        new_batch.uids = list(self.uids)
-        new_batch.prompt_cache = copy.deepcopy(self.prompt_cache)
-        new_batch.tokens = list(self.tokens)
-        new_batch.prefill_step_size = self.prefill_step_size
-        new_batch.samplers = list(self.samplers)
-        new_batch.fallback_sampler = self.fallback_sampler
-        new_batch.logits_processors = list(self.logits_processors)
-        new_batch.state_machines = list(self.state_machines)
-        new_batch.max_tokens = list(self.max_tokens)
-        return new_batch
-
     def split(self, indices: List[int]):
         indices = sorted(indices)
-        indices_left = sorted(set(range(len(self.uids))) - set(indices))
-        new_batch = self._copy()
+        index_set = set(indices)
+        indices_left = [idx for idx in range(len(self.uids)) if idx not in index_set]
+        new_batch = self.__class__(
+            model=self.model,
+            uids=[self.uids[idx] for idx in indices],
+            caches=[self.extract_cache(idx) for idx in indices],
+            tokens=[self.tokens[idx] for idx in indices],
+            prefill_step_size=self.prefill_step_size,
+            samplers=[self.samplers[idx] for idx in indices],
+            fallback_sampler=self.fallback_sampler,
+            logits_processors=[self.logits_processors[idx] for idx in indices],
+            state_machines=[self.state_machines[idx] for idx in indices],
+            max_tokens=[self.max_tokens[idx] for idx in indices],
+        )
         self.filter(indices_left)
-        new_batch.filter(indices)
         return new_batch
 
     def filter(self, keep: List[int]):
