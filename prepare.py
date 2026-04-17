@@ -1,12 +1,10 @@
 from __future__ import annotations
 
-import argparse
 import csv
 import hashlib
 import importlib.util
 import json
 import shutil
-import sys
 import time
 from dataclasses import dataclass
 from pathlib import Path
@@ -15,13 +13,10 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent
 DATASET_CACHE_DIR = ROOT / ".cache" / "huggingface"
 CONFIG_PATH = ROOT / "config.json"
-RESULTS_PATH = ROOT / "results.tsv"
-RUNS_DIR = ROOT / "runs"
-STATE_DIR = ROOT / "state"
-REFERENCE_OUTPUTS_PATH = STATE_DIR / "reference_outputs.json"
-BEST_GENERATE_PATH = STATE_DIR / "best_generate.py"
-BEST_METRICS_PATH = STATE_DIR / "best_metrics.json"
 GENERATE_PATH = ROOT / "generate.py"
+RESULTS_PATH = ROOT / "results.tsv"
+STATE_DIR = ROOT / "state"
+INCUMBENT_PATH = STATE_DIR / "best_generate.py"
 
 
 @dataclass(frozen=True)
@@ -31,7 +26,7 @@ class Config:
     target_lang: str
     dataset_repo: str
     dataset_file: str
-    dataset_text_field: str
+    dataset_source_field: str
     dataset_fixture_limit: int | None
     dataset_skip_bad_source: bool
     max_new_tokens: int
@@ -39,8 +34,6 @@ class Config:
     quick_repeats: int
     full_repeats: int
     max_peak_metal_mb: float | None
-    min_keep_gain_percent: float
-    tie_memory_delta_mb: float
     quick_fixture_ids: tuple[str, ...]
 
 
@@ -62,7 +55,7 @@ def load_config() -> Config:
         target_lang=str(payload["target_lang"]),
         dataset_repo=str(payload["dataset_repo"]),
         dataset_file=str(payload["dataset_file"]),
-        dataset_text_field=str(payload["dataset_text_field"]),
+        dataset_source_field=str(payload["dataset_source_field"]),
         dataset_fixture_limit=(
             int(payload["dataset_fixture_limit"])
             if payload.get("dataset_fixture_limit") is not None
@@ -74,8 +67,6 @@ def load_config() -> Config:
         quick_repeats=int(payload["quick_repeats"]),
         full_repeats=int(payload["full_repeats"]),
         max_peak_metal_mb=max_peak_metal_mb,
-        min_keep_gain_percent=float(payload["min_keep_gain_percent"]),
-        tie_memory_delta_mb=float(payload["tie_memory_delta_mb"]),
         quick_fixture_ids=tuple(str(item) for item in payload["quick_fixture_ids"]),
     )
 
@@ -83,6 +74,14 @@ def load_config() -> Config:
 def require_memory_limit(config: Config):
     if config.max_peak_metal_mb is None or config.max_peak_metal_mb <= 0:
         raise ValueError("config.json must set max_peak_metal_mb to a positive value")
+
+
+def dataset_fixture_id(payload: dict, line_number: int) -> str:
+    lp = str(payload.get("lp") or "row")
+    segment_id = payload.get("segment_id")
+    if segment_id is None:
+        return f"{lp}-{line_number:04d}"
+    return f"{lp}-{int(segment_id):04d}"
 
 
 def load_fixtures() -> list[Fixture]:
@@ -108,7 +107,7 @@ def load_fixtures() -> list[Fixture]:
         payload = json.loads(line)
         if config.dataset_skip_bad_source and payload.get("is_bad_source"):
             continue
-        source_text = str(payload.get(config.dataset_text_field, "")).strip()
+        source_text = str(payload.get(config.dataset_source_field, "")).strip()
         if not source_text:
             continue
         fixture_id = dataset_fixture_id(payload, line_number)
@@ -117,12 +116,7 @@ def load_fixtures() -> list[Fixture]:
                 f"Duplicate fixture id at line {line_number}: {fixture_id}"
             )
         seen_ids.add(fixture_id)
-        fixtures.append(
-            Fixture(
-                fixture_id=fixture_id,
-                source_text=source_text,
-            )
-        )
+        fixtures.append(Fixture(fixture_id=fixture_id, source_text=source_text))
         if (
             config.dataset_fixture_limit is not None
             and len(fixtures) >= config.dataset_fixture_limit
@@ -133,14 +127,6 @@ def load_fixtures() -> list[Fixture]:
             f"No usable fixtures found in {config.dataset_repo}/{config.dataset_file}"
         )
     return fixtures
-
-
-def dataset_fixture_id(payload: dict, line_number: int) -> str:
-    lp = str(payload.get("lp") or "row")
-    segment_id = payload.get("segment_id")
-    if segment_id is None:
-        return f"{lp}-{line_number:04d}"
-    return f"{lp}-{int(segment_id):04d}"
 
 
 def split_fixtures(
@@ -154,68 +140,6 @@ def split_fixtures(
             raise ValueError(f"Quick fixture id not found: {fixture_id}")
         quick.append(fixture)
     return quick, fixtures
-
-
-def sync():
-    import mlx.core as mx
-
-    synchronize = getattr(mx, "synchronize", None)
-    if callable(synchronize):
-        synchronize()
-
-
-def reset_peak_memory():
-    import mlx.core as mx
-
-    reset = getattr(mx, "reset_peak_memory", None)
-    if callable(reset):
-        reset()
-        return
-    mx.metal.reset_peak_memory()
-
-
-def get_peak_memory_bytes() -> int:
-    import mlx.core as mx
-
-    getter = getattr(mx, "get_peak_memory", None)
-    if callable(getter):
-        return int(getter())
-    return int(mx.metal.get_peak_memory())
-
-
-def bytes_to_mb(value: int) -> float:
-    return round(value / 1024 / 1024, 1)
-
-
-def candidate_hash(path: Path) -> str:
-    digest = hashlib.sha256(path.read_bytes()).hexdigest()
-    return digest[:12]
-
-
-def ensure_results_header():
-    if RESULTS_PATH.exists():
-        return
-    RESULTS_PATH.write_text(
-        "run_id\tmode\tcandidate_hash\toutput_tokens_per_sec\tpeak_metal_mb\tstatus\tdescription\n",
-        encoding="utf-8",
-    )
-
-
-def append_results_row(row: list[str]):
-    ensure_results_header()
-    with RESULTS_PATH.open("a", encoding="utf-8", newline="") as handle:
-        writer = csv.writer(handle, delimiter="\t")
-        writer.writerow(row)
-
-
-def load_module_from_path(path: Path, module_name: str):
-    spec = importlib.util.spec_from_file_location(module_name, path)
-    if spec is None or spec.loader is None:
-        raise ImportError(f"Unable to import module from {path}")
-    module = importlib.util.module_from_spec(spec)
-    sys.modules[module_name] = module
-    spec.loader.exec_module(module)
-    return module
 
 
 def load_model_and_tokenizer(config: Config):
@@ -249,251 +173,173 @@ def max_tokens_for_fixture(config: Config, fixture: Fixture) -> int:
     )
 
 
-def generate_fixture_outputs(
-    module, model, tokenizer, config: Config, fixtures: list[Fixture]
+def benchmark_generate_fn(
+    generate_fn, model, tokenizer, mode: str, config: Config, fixtures
 ):
-    outputs: dict[str, dict] = {}
-    fixtures_by_max_tokens: dict[int, list[Fixture]] = {}
+    import mlx.core as mx
 
+    repeats = config.quick_repeats if mode == "quick" else config.full_repeats
+    prompts_by_max_tokens: dict[int, list[list[int]]] = {}
+    fixture_count = 0
     for fixture in fixtures:
         fixture_max_tokens = max_tokens_for_fixture(config, fixture)
-        fixtures_by_max_tokens.setdefault(fixture_max_tokens, []).append(fixture)
-
-    for fixture_max_tokens, grouped_fixtures in fixtures_by_max_tokens.items():
-        prompt_batch = [
+        prompts_by_max_tokens.setdefault(fixture_max_tokens, []).append(
             build_prompt(tokenizer, config, fixture.source_text)
-            for fixture in grouped_fixtures
-        ]
-        batch_results = module.generate_text(
-            model,
-            tokenizer,
-            prompt_batch,
-            max_tokens=fixture_max_tokens,
         )
-        if len(batch_results) != len(grouped_fixtures):
-            raise RuntimeError(
-                "Candidate returned the wrong number of outputs for the prompt batch"
-            )
-        for fixture, result in zip(grouped_fixtures, batch_results):
-            outputs[fixture.fixture_id] = result
-
-    return outputs
-
-
-def generate_references(
-    config: Config,
-    quick_fixtures: list[Fixture],
-    full_fixtures: list[Fixture],
-    module_path: Path,
-):
-    model, tokenizer = load_model_and_tokenizer(config)
-    baseline = load_module_from_path(module_path, f"reference_{time.time_ns()}")
-    outputs_by_mode: dict[str, dict[str, dict[str, list[int]]]] = {}
-    for mode, fixtures in (("quick", quick_fixtures), ("full", full_fixtures)):
-        generated_outputs = generate_fixture_outputs(
-            baseline, model, tokenizer, config, fixtures
-        )
-        outputs: dict[str, dict[str, list[int]]] = {}
-        for fixture in fixtures:
-            result = generated_outputs[fixture.fixture_id]
-            outputs[fixture.fixture_id] = {
-                "token_ids": [int(token) for token in result["token_ids"]],
-            }
-        outputs_by_mode[mode] = outputs
-    STATE_DIR.mkdir(parents=True, exist_ok=True)
-    REFERENCE_OUTPUTS_PATH.write_text(
-        json.dumps(outputs_by_mode, ensure_ascii=False, indent=2) + "\n",
-        encoding="utf-8",
-    )
-
-
-def load_reference_outputs(mode: str) -> dict[str, dict]:
-    if not REFERENCE_OUTPUTS_PATH.exists():
-        raise ValueError("Reference outputs missing. Run setup first.")
-    payload = json.loads(REFERENCE_OUTPUTS_PATH.read_text(encoding="utf-8"))
-    if mode in payload:
-        return payload[mode]
-    return payload
-
-
-def _run_once(
-    module,
-    model,
-    tokenizer,
-    config: Config,
-    fixtures: list[Fixture],
-    references: dict[str, dict],
-):
-    total_output_tokens = 0
-    generated_outputs = generate_fixture_outputs(
-        module, model, tokenizer, config, fixtures
-    )
-    for fixture in fixtures:
-        result = generated_outputs[fixture.fixture_id]
-        token_ids = [int(token) for token in result["token_ids"]]
-        expected = references[fixture.fixture_id]["token_ids"]
-        if token_ids != expected:
-            return {
-                "ok": False,
-                "failure_reason": "output_mismatch",
-                "fixture_id": fixture.fixture_id,
-                "expected_token_count": len(expected),
-                "actual_token_count": len(token_ids),
-            }
-        total_output_tokens += len(token_ids)
-    return {
-        "ok": True,
-        "total_output_tokens": total_output_tokens,
-    }
-
-
-def benchmark_module(
-    module_path: Path, mode: str, config: Config, fixtures: list[Fixture]
-):
-    repeats = config.quick_repeats if mode == "quick" else config.full_repeats
-    references = load_reference_outputs(mode)
-    model, tokenizer = load_model_and_tokenizer(config)
-    module = load_module_from_path(module_path, f"candidate_{time.time_ns()}")
+        fixture_count += 1
 
     for _ in range(config.warmup_runs):
-        warmup_result = _run_once(
-            module, model, tokenizer, config, fixtures, references
-        )
-        if not warmup_result["ok"]:
-            return {
-                "ok": False,
-                "failure_reason": warmup_result["failure_reason"],
-                "fixture_id": warmup_result.get("fixture_id"),
-                "module_path": str(module_path),
-                "candidate_hash": candidate_hash(module_path),
-            }
+        for fixture_max_tokens, prompt_batch in prompts_by_max_tokens.items():
+            generate_fn(model, tokenizer, prompt_batch, max_tokens=fixture_max_tokens)
 
-    reset_peak_memory()
-    sync()
+    reset = getattr(mx, "reset_peak_memory", None)
+    if callable(reset):
+        reset()
+    else:
+        mx.metal.reset_peak_memory()
+    synchronize = getattr(mx, "synchronize", None)
+    if callable(synchronize):
+        synchronize()
+
     started = time.perf_counter()
     total_output_tokens = 0
     for _ in range(repeats):
-        run_result = _run_once(module, model, tokenizer, config, fixtures, references)
-        if not run_result["ok"]:
-            sync()
-            return {
-                "ok": False,
-                "failure_reason": run_result["failure_reason"],
-                "fixture_id": run_result.get("fixture_id"),
-                "module_path": str(module_path),
-                "candidate_hash": candidate_hash(module_path),
-            }
-        total_output_tokens += int(run_result["total_output_tokens"])
-    sync()
+        for fixture_max_tokens, prompt_batch in prompts_by_max_tokens.items():
+            batch_results = generate_fn(
+                model,
+                tokenizer,
+                prompt_batch,
+                max_tokens=fixture_max_tokens,
+            )
+            if len(batch_results) != len(prompt_batch):
+                raise RuntimeError(
+                    "Candidate returned the wrong number of outputs for the prompt batch"
+                )
+            for result in batch_results:
+                total_output_tokens += len(result["token_ids"])
+
+    if callable(synchronize):
+        synchronize()
     elapsed = time.perf_counter() - started
-    peak_metal_mb = bytes_to_mb(get_peak_memory_bytes())
+    get_peak_memory = getattr(mx, "get_peak_memory", None)
+    peak_memory_bytes = (
+        int(get_peak_memory())
+        if callable(get_peak_memory)
+        else int(mx.metal.get_peak_memory())
+    )
+    peak_metal_mb = round(peak_memory_bytes / 1024 / 1024, 1)
     output_tokens_per_sec = 0.0 if elapsed <= 0 else total_output_tokens / elapsed
+    within_memory_limit = peak_metal_mb <= float(config.max_peak_metal_mb)
 
     return {
-        "ok": True,
-        "module_path": str(module_path),
-        "candidate_hash": candidate_hash(module_path),
+        "ok": within_memory_limit,
         "mode": mode,
-        "fixture_count": len(fixtures),
+        "fixture_count": fixture_count,
         "repeats": repeats,
         "elapsed_seconds": round(elapsed, 4),
         "output_tokens": total_output_tokens,
         "output_tokens_per_sec": round(output_tokens_per_sec, 4),
         "peak_metal_mb": peak_metal_mb,
+        "max_peak_metal_mb": float(config.max_peak_metal_mb),
+        "failure_reason": None if within_memory_limit else "memory_limit_exceeded",
     }
 
 
-def run_id() -> str:
-    return time.strftime("%Y%m%d-%H%M%S")
+def load_module_from_path(path: Path, module_name: str):
+    spec = importlib.util.spec_from_file_location(module_name, path)
+    if spec is None or spec.loader is None:
+        raise ImportError(f"Unable to import module from {path}")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
 
 
-def save_run_artifact(run_identifier: str, payload: dict):
-    output_dir = RUNS_DIR / run_identifier
-    output_dir.mkdir(parents=True, exist_ok=True)
-    (output_dir / "result.json").write_text(
-        json.dumps(payload, ensure_ascii=False, indent=2) + "\n",
+def candidate_hash(path: Path) -> str:
+    return hashlib.sha256(path.read_bytes()).hexdigest()[:12]
+
+
+def ensure_results_header():
+    if RESULTS_PATH.exists():
+        return
+    RESULTS_PATH.write_text(
+        "run_id\tmode\tcandidate_hash\tincumbent_hash\tcandidate_tps\tincumbent_tps\tpeak_metal_mb\tstatus\tdescription\n",
         encoding="utf-8",
     )
 
 
-def promote_generate(metrics: dict):
+def append_results_row(row: list[str]):
+    ensure_results_header()
+    with RESULTS_PATH.open("a", encoding="utf-8", newline="") as handle:
+        writer = csv.writer(handle, delimiter="\t")
+        writer.writerow(row)
+
+
+def promote_candidate():
     STATE_DIR.mkdir(parents=True, exist_ok=True)
-    shutil.copy2(GENERATE_PATH, BEST_GENERATE_PATH)
-    BEST_METRICS_PATH.write_text(
-        json.dumps(metrics, ensure_ascii=False, indent=2) + "\n",
-        encoding="utf-8",
-    )
-
-
-def load_best_metrics() -> dict:
-    if not BEST_METRICS_PATH.exists():
-        raise ValueError("Best metrics missing. Run setup first.")
-    return json.loads(BEST_METRICS_PATH.read_text(encoding="utf-8"))
-
-
-def incumbent_path() -> Path:
-    if not BEST_GENERATE_PATH.exists():
-        raise ValueError("Best generate snapshot missing. Run setup first.")
-    return BEST_GENERATE_PATH
-
-
-def reset_generate_from_incumbent():
-    shutil.copy2(incumbent_path(), GENERATE_PATH)
+    shutil.copy2(GENERATE_PATH, INCUMBENT_PATH)
 
 
 def compare_candidate(
-    config: Config, mode: str, fixtures: list[Fixture], description: str
+    config: Config, mode: str, fixtures, description: str, generate_fn
 ):
-    candidate_metrics = benchmark_module(GENERATE_PATH, mode, config, fixtures)
-    incumbent_metrics = benchmark_module(incumbent_path(), mode, config, fixtures)
-    run_identifier = run_id()
+    if not INCUMBENT_PATH.exists():
+        raise ValueError("Incumbent snapshot missing. Run `uv run prepare.py` first.")
+
+    candidate_file_hash = candidate_hash(GENERATE_PATH)
+    incumbent_file_hash = candidate_hash(INCUMBENT_PATH)
+    model, tokenizer = load_model_and_tokenizer(config)
+    candidate_metrics = benchmark_generate_fn(
+        generate_fn, model, tokenizer, mode, config, fixtures
+    )
+
+    if candidate_file_hash == incumbent_file_hash:
+        incumbent_metrics = dict(candidate_metrics)
+    else:
+        incumbent_module = load_module_from_path(
+            INCUMBENT_PATH, f"incumbent_{time.time_ns()}"
+        )
+        incumbent_metrics = benchmark_generate_fn(
+            incumbent_module.generate_text, model, tokenizer, mode, config, fixtures
+        )
 
     if not candidate_metrics["ok"]:
         status = "discard"
         decision_reason = candidate_metrics["failure_reason"]
-    elif candidate_metrics["peak_metal_mb"] > float(config.max_peak_metal_mb):
-        status = "discard"
-        decision_reason = "memory_limit_exceeded"
     elif not incumbent_metrics["ok"]:
-        raise RuntimeError(
-            "Incumbent generate.py failed benchmark; reset the sandbox state"
-        )
-    else:
-        incumbent_tps = float(incumbent_metrics["output_tokens_per_sec"])
-        candidate_tps = float(candidate_metrics["output_tokens_per_sec"])
-        gain_percent = (
-            0.0
-            if incumbent_tps <= 0
-            else ((candidate_tps - incumbent_tps) / incumbent_tps) * 100.0
-        )
-        memory_delta_mb = float(incumbent_metrics["peak_metal_mb"]) - float(
-            candidate_metrics["peak_metal_mb"]
-        )
-
-        if gain_percent >= config.min_keep_gain_percent:
-            if mode == "full":
-                status = "promoted"
-                decision_reason = f"throughput_gain_{gain_percent:.2f}_percent"
-                promote_generate(candidate_metrics)
-            else:
-                status = "trial"
-                decision_reason = f"quick_win_{gain_percent:.2f}_percent"
-        elif (
-            abs(gain_percent) < config.min_keep_gain_percent
-            and memory_delta_mb >= config.tie_memory_delta_mb
-        ):
-            if mode == "full":
-                status = "promoted"
-                decision_reason = f"memory_win_{memory_delta_mb:.1f}_mb"
-                promote_generate(candidate_metrics)
-            else:
-                status = "trial"
-                decision_reason = f"quick_memory_win_{memory_delta_mb:.1f}_mb"
+        raise RuntimeError("Incumbent benchmark failed; rerun `uv run prepare.py`.")
+    elif candidate_file_hash == incumbent_file_hash:
+        status = "incumbent"
+        decision_reason = "same_as_incumbent"
+    elif float(candidate_metrics["output_tokens_per_sec"]) > float(
+        incumbent_metrics["output_tokens_per_sec"]
+    ):
+        if mode == "full":
+            promote_candidate()
+            status = "promoted"
+            decision_reason = "throughput_win"
         else:
-            status = "discard"
-            decision_reason = f"no_win_gain_{gain_percent:.2f}_percent_memory_delta_{memory_delta_mb:.1f}_mb"
+            status = "trial"
+            decision_reason = "quick_throughput_win"
+    else:
+        status = "discard"
+        decision_reason = "no_throughput_win"
 
-    artifact = {
+    run_identifier = time.strftime("%Y%m%d-%H%M%S")
+    append_results_row(
+        [
+            run_identifier,
+            mode,
+            candidate_file_hash,
+            incumbent_file_hash,
+            f"{float(candidate_metrics.get('output_tokens_per_sec', 0.0)):.4f}",
+            f"{float(incumbent_metrics.get('output_tokens_per_sec', 0.0)):.4f}",
+            f"{float(candidate_metrics.get('peak_metal_mb', 0.0)):.1f}",
+            status,
+            description,
+        ]
+    )
+
+    return {
         "run_id": run_identifier,
         "mode": mode,
         "description": description,
@@ -502,140 +348,25 @@ def compare_candidate(
         "status": status,
         "decision_reason": decision_reason,
     }
-    save_run_artifact(run_identifier, artifact)
-
-    output_tokens_per_sec = (
-        candidate_metrics["output_tokens_per_sec"]
-        if candidate_metrics.get("ok")
-        else 0.0
-    )
-    peak_metal_mb = candidate_metrics.get("peak_metal_mb", 0.0)
-    append_results_row(
-        [
-            run_identifier,
-            mode,
-            candidate_hash(GENERATE_PATH),
-            f"{float(output_tokens_per_sec):.4f}",
-            f"{float(peak_metal_mb):.1f}",
-            status,
-            description,
-        ]
-    )
-    return artifact
-
-
-def initialize_state(
-    config: Config, quick_fixtures: list[Fixture], full_fixtures: list[Fixture]
-):
-    STATE_DIR.mkdir(parents=True, exist_ok=True)
-    RUNS_DIR.mkdir(parents=True, exist_ok=True)
-    ensure_results_header()
-    shutil.copy2(GENERATE_PATH, BEST_GENERATE_PATH)
-    generate_references(config, quick_fixtures, full_fixtures, BEST_GENERATE_PATH)
-    baseline_metrics = benchmark_module(
-        BEST_GENERATE_PATH, "full", config, full_fixtures
-    )
-    if not baseline_metrics["ok"]:
-        raise RuntimeError(f"Baseline setup failed: {baseline_metrics}")
-    shutil.copy2(BEST_GENERATE_PATH, GENERATE_PATH)
-    BEST_METRICS_PATH.write_text(
-        json.dumps(baseline_metrics, ensure_ascii=False, indent=2) + "\n",
-        encoding="utf-8",
-    )
-    append_results_row(
-        [
-            run_id(),
-            "full",
-            candidate_hash(BEST_GENERATE_PATH),
-            f"{float(baseline_metrics['output_tokens_per_sec']):.4f}",
-            f"{float(baseline_metrics['peak_metal_mb']):.1f}",
-            "promoted",
-            "baseline setup",
-        ]
-    )
-    return baseline_metrics
-
-
-def recent_results(limit: int = 10) -> list[str]:
-    if not RESULTS_PATH.exists():
-        return []
-    lines = RESULTS_PATH.read_text(encoding="utf-8").splitlines()
-    return lines[-limit:]
-
-
-def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(
-        description="Manage the generate autoresearch sandbox"
-    )
-    subparsers = parser.add_subparsers(dest="command", required=True)
-    subparsers.add_parser(
-        "setup", help="Initialize reference outputs and incumbent state"
-    )
-    subparsers.add_parser(
-        "reset", help="Restore generate.py from the incumbent snapshot"
-    )
-    subparsers.add_parser(
-        "status", help="Show the current incumbent and recent run history"
-    )
-    return parser
 
 
 def main() -> int:
-    parser = build_parser()
-    args = parser.parse_args()
-
     config = load_config()
-    fixtures = load_fixtures()
-    quick_fixtures, full_fixtures = split_fixtures(config, fixtures)
-
-    if args.command == "setup":
-        require_memory_limit(config)
-        baseline_metrics = initialize_state(config, quick_fixtures, full_fixtures)
-        print(
-            json.dumps(
-                {"status": "initialized", "baseline": baseline_metrics}, indent=2
-            )
+    require_memory_limit(config)
+    load_fixtures()
+    promote_candidate()
+    ensure_results_header()
+    print(
+        json.dumps(
+            {
+                "status": "initialized",
+                "incumbent": str(INCUMBENT_PATH),
+                "results": str(RESULTS_PATH),
+            },
+            indent=2,
         )
-        return 0
-
-    if args.command == "reset":
-        try:
-            reset_generate_from_incumbent()
-            generate_source = str(incumbent_path())
-        except ValueError as exc:
-            print(json.dumps({"status": "error", "message": str(exc)}, indent=2))
-            return 1
-        print(
-            json.dumps(
-                {"status": "reset", "generate_source": generate_source}, indent=2
-            )
-        )
-        return 0
-
-    if args.command == "status":
-        try:
-            best_metrics = load_best_metrics()
-        except ValueError as exc:
-            print(
-                json.dumps(
-                    {
-                        "status": "not_initialized",
-                        "message": str(exc),
-                        "recent_results": recent_results(),
-                    },
-                    indent=2,
-                )
-            )
-            return 0
-        payload = {
-            "best_metrics": best_metrics,
-            "recent_results": recent_results(),
-        }
-        print(json.dumps(payload, indent=2))
-        return 0
-
-    parser.error(f"Unknown command: {args.command}")
-    return 1
+    )
+    return 0
 
 
 if __name__ == "__main__":

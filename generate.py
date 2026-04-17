@@ -24,14 +24,6 @@ from mlx_lm.models.cache import (
     TokenBuffer,
 )
 
-from prepare import (
-    compare_candidate,
-    load_config,
-    load_fixtures,
-    require_memory_limit,
-    split_fixtures,
-)
-
 DEFAULT_MAX_TOKENS = 100
 
 # A stream on the default device just for generation
@@ -976,19 +968,25 @@ def generate_text(model, tokenizer, prompt_tokens_batch, *, max_tokens: int):
 
 
 def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(
-        description="Benchmark the current generate.py candidate"
-    )
+    parser = argparse.ArgumentParser(description="Benchmark the current generate.py")
     parser.add_argument("--full", action="store_true", help="Use the full fixture set")
     parser.add_argument(
         "--description",
         default="manual run",
-        help="Short description of the candidate change",
+        help="Short description of the current experiment",
     )
     return parser
 
 
 def main() -> int:
+    from prepare import (
+        compare_candidate,
+        load_config,
+        load_fixtures,
+        require_memory_limit,
+        split_fixtures,
+    )
+
     parser = build_parser()
     args = parser.parse_args()
 
@@ -999,9 +997,15 @@ def main() -> int:
 
     mode = "full" if args.full else "quick"
     selected_fixtures = full_fixtures if args.full else quick_fixtures
-    result = compare_candidate(config, mode, selected_fixtures, args.description)
+    result = compare_candidate(
+        config,
+        mode,
+        selected_fixtures,
+        args.description,
+        generate_text,
+    )
     print(json.dumps(result, indent=2))
-    return 0
+    return 0 if result["status"] in {"trial", "promoted", "incumbent"} else 1
 
 
 if __name__ == "__main__":

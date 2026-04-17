@@ -4,7 +4,7 @@
   "target_lang": "en",
   "dataset_repo": "google/wmt24pp",
   "dataset_file": "en-bn_IN.jsonl",
-  "dataset_text_field": "target",
+  "dataset_source_field": "target",
   "dataset_fixture_limit": 8,
   "dataset_skip_bad_source": true,
   "max_new_tokens": 2048,
@@ -12,8 +12,6 @@
   "quick_repeats": 2,
   "full_repeats": 3,
   "max_peak_metal_mb": 12000,
-  "min_keep_gain_percent": 1.0,
-  "tie_memory_delta_mb": 64,
   "quick_fixture_ids": [
     "en-bn_IN-0001",
     "en-bn_IN-0007"
