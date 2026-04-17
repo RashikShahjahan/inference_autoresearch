@@ -87,7 +87,7 @@ config.json     benchmark contract and dataset selection
 - `dataset_repo`
 - `dataset_file`
 - `dataset_text_field`
-- `dataset_fixture_limit`
+- `dataset_fixture_limit` (`null` uses all usable examples)
 - `dataset_skip_bad_source`
 - `max_new_tokens`
 - `max_peak_metal_mb`

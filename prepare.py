@@ -31,7 +31,7 @@ class Config:
     dataset_repo: str
     dataset_file: str
     dataset_text_field: str
-    dataset_fixture_limit: int
+    dataset_fixture_limit: int | None
     dataset_skip_bad_source: bool
     max_new_tokens: int
     warmup_runs: int
@@ -62,7 +62,11 @@ def load_config() -> Config:
         dataset_repo=str(payload["dataset_repo"]),
         dataset_file=str(payload["dataset_file"]),
         dataset_text_field=str(payload["dataset_text_field"]),
-        dataset_fixture_limit=int(payload["dataset_fixture_limit"]),
+        dataset_fixture_limit=(
+            int(payload["dataset_fixture_limit"])
+            if payload.get("dataset_fixture_limit") is not None
+            else None
+        ),
         dataset_skip_bad_source=bool(payload["dataset_skip_bad_source"]),
         max_new_tokens=int(payload["max_new_tokens"]),
         warmup_runs=int(payload["warmup_runs"]),
@@ -118,7 +122,10 @@ def load_fixtures() -> list[Fixture]:
                 source_text=source_text,
             )
         )
-        if len(fixtures) >= config.dataset_fixture_limit:
+        if (
+            config.dataset_fixture_limit is not None
+            and len(fixtures) >= config.dataset_fixture_limit
+        ):
             break
     if not fixtures:
         raise ValueError(
