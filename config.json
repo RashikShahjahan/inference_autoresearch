@@ -5,7 +5,7 @@
   "dataset_repo": "google/wmt24pp",
   "dataset_file": "en-bn_IN.jsonl",
   "dataset_text_field": "target",
-  "dataset_fixture_limit": null,
+  "dataset_fixture_limit": 10,
   "dataset_skip_bad_source": true,
   "max_new_tokens": 2048,
   "warmup_runs": 1,
