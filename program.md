@@ -32,11 +32,11 @@ Each experiment runs through the fixed benchmark contract. Iterate with quick ru
 - Change the correctness contract: candidate output token ids must exactly match the frozen reference outputs.
 - Use batching, worker scheduling changes, model swaps, prompt-template changes, or speculative decoding.
 
-**The goal is simple: maximize `output_tokens_per_sec` while staying at or below `max_peak_metal_mb`.** Correctness is strict, and the peak Metal memory ceiling is a hard constraint.
+**The goal is simple: maximize `output_tokens_per_sec` while staying at or below `max_peak_metal_mb`.** Correctness is strict, and the peak Metal memory ceiling is a hard constraint. Throughput always takes priority once the candidate is within the memory limit: do not keep or promote a change that lowers throughput only because it uses less memory.
 
 **Promotion rules**: Quick runs are for iteration only. Only `uv run generate.py --full --description "..."` can promote a new incumbent.
 
-**Simplicity criterion**: All else being equal, simpler is better. A tiny throughput win that adds awkward complexity is usually not worth it. Equal throughput with meaningfully lower memory is a win. Equal or better results from less code is an especially good outcome.
+**Simplicity criterion**: All else being equal, simpler is better. A tiny throughput win that adds awkward complexity is usually not worth it. If throughput is effectively tied, lower memory is better. Equal or better results from less code is an especially good outcome.
 
 **The first run**: Your first run should always be `uv run prepare.py setup`.
 
