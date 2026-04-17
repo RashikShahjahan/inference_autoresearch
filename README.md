@@ -1,10 +1,6 @@
 # autoresearch
 
-*One day, model inference used to be tuned by hand: tweak a decode loop, squint at a benchmark, maybe forget what changed, then repeat. That era is ending too. The obvious next step is to hand a coding agent a small but real inference harness, give it exactly one mutable file, and let it grind on throughput while you sleep. This repo is that idea, reduced down to the smallest useful shape.*
-
-The idea: give an AI agent a fixed translation benchmark and a single mutable `generate.py`, let it experiment autonomously on MLX inference code, measure throughput, and keep only the changes that beat the incumbent under the real contract.
-
-This repo is an inference-oriented take on the minimal `karpathy/autoresearch` setup. Instead of optimizing a training loop, the agent optimizes generation throughput for `bn -> en` translation with `mlx-community/translategemma-4b-it-4bit` on a fixed subset of `google/wmt24pp`. The point is that you are not manually doing inference research in the usual way. You set up the harness, define the contract, point the agent at `program.md`, and let it iterate on `generate.py`. The benchmark is strict: candidate output token ids must exactly match the frozen reference outputs, and every candidate must stay under a configurable peak Metal memory ceiling.
+This repo is an inference-oriented take on the minimal `karpathy/autoresearch` setup, and full credit to Andrej Karpathy for the original style and core concept. Instead of optimizing a training loop, the agent optimizes generation throughput for `bn -> en` translation with `mlx-community/translategemma-4b-it-4bit` on a fixed subset of `google/wmt24pp`. The point is that you are not manually doing inference research in the usual way. You set up the harness, define the contract, point the agent at `program.md`, and let it iterate on `generate.py`. The benchmark is strict: candidate output token ids must exactly match the frozen reference outputs, and every candidate must stay under a configurable peak Metal memory ceiling.
 
 ## How it works
 
