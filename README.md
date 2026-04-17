@@ -42,7 +42,7 @@ Point your coding agent at this repo and have it read `program.md`, `prepare.py`
 For example:
 
 ```text
-Hi, have a look at program.md and let's kick off a new experiment. Start with setup and then iterate on generate.py.
+Read program.md and start a new experiment. Do the setup first.
 ```
 
 The `program.md` file is the lightweight research policy for the agent: what it may change, what the benchmark enforces, and how incumbent promotion works.
