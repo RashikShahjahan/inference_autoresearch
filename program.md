@@ -2,8 +2,6 @@
 
 This repository is set up for the `inference_assistant` research assistant workflow for inference benchmarking.
 
-Your job is to help the user evaluate and improve `generate.py` within the fixed benchmark contract by proposing experiments, modifying code and running benchmarks.
-
 ## Setup
 
 To start or resume a run, work through this checklist:
@@ -25,7 +23,7 @@ Each experiment benchmarks `generate.py` against the incumbent snapshot in `stat
 
 
 **What you CAN do:**
-- Modify `generate.py`, any change is welcome: batching, decoding, custom samplers and logit processors, syncronization, compilation and more
+- Modify `generate.py`; any changes are welcome: batching, decoding strategies, custom samplers, logit processors, synchronization, compilation, and more.
 
 **What you CANNOT do during normal experimentation unless the user asks:**
 - Modify `prepare.py` or the benchmark logic it defines.
