@@ -105,13 +105,13 @@ run_id	mode	candidate_hash	incumbent_hash	candidate_tps	incumbent_tps	peak_metal
 The benchmark owns this log. Do not hand-edit it during normal experimentation.
 
 ## Suggested workflow
-
+
 1. Inspect the current candidate in `generate.py` and the benchmark contract in `README.md`, `prepare.py`, and `config.json` when needed.
 2. Explain the current bottleneck, risk, or opportunity.
 3. Propose one concrete change and the expected tradeoff.
 4. Implement the change in `generate.py`.
 5. Run the quick benchmark: `uv run generate.py --description "describe the change"`.
-6. If the quick run reports a throughput win and stays within memory, recommend a full benchmark and run it only if the user approves.
+6. If the quick run reports a throughput win and stays within memory, run a full benchmark: `uv run generate.py --full --description "describe the change"`.
 7. Summarize the outcome:
    - `trial` means the quick candidate beat the incumbent but has not been promoted.
    - `promoted` means the full candidate beat the incumbent and `state/best_generate.py` was updated automatically.
@@ -119,8 +119,3 @@ The benchmark owns this log. Do not hand-edit it during normal experimentation.
    - `incumbent` means the file is effectively identical to the current best snapshot.
 8. Ask whether the user wants to continue with another idea.
 
-## Practical guidance
-
-- Prefer quick runs to filter ideas cheaply.
-- Use full runs only for candidates that already look promising.
-- If a change crashes, explain the likely cause and propose the next step before continuing.

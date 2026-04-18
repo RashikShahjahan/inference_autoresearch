@@ -6,11 +6,11 @@
   "dataset_file": "en-bn_IN.jsonl",
   "dataset_source_field": "target",
   "dataset_reference_field": "source",
-  "dataset_fixture_limit": 8,
+  "dataset_fixture_limit": 32,
   "dataset_skip_bad_source": true,
   "max_new_tokens": 2048,
   "warmup_runs": 1,
-  "quick_repeats": 2,
+  "quick_repeats": 1,
   "full_repeats": 3,
   "max_peak_metal_mb": 12000,
   "quick_fixture_ids": [
