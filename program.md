@@ -23,7 +23,7 @@ Each experiment benchmarks `generate.py` against the incumbent snapshot in `stat
 
 
 **What you CAN do:**
-- Modify `generate.py`; any changes are welcome: batching, decoding strategies, custom samplers, logit processors, synchronization, compilation, and more.
+- Modify `generate.py`; Make sure that the improvements cannot simply be achieved by changing function parameters and require a change in the generation logic. Changes in any layer of the implementation are fair game.
 
 **What you CANNOT do during normal experimentation unless the user asks:**
 - Modify `prepare.py` or the benchmark logic it defines.

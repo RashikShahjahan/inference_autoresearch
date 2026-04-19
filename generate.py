@@ -14,10 +14,6 @@ from transformers import PreTrainedTokenizer
 
 from mlx_lm.models import cache
 from mlx_lm.models.cache import (
-    ArraysCache,
-    BatchKVCache,
-    BatchRotatingKVCache,
-    CacheList,
     KVCache,
     RotatingKVCache,
     TokenBuffer,
