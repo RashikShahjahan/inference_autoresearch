@@ -276,19 +276,28 @@ def benchmark_generate_fn(generate_fn, model, tokenizer, config: Config, fixture
     repeats = config.repeats
     prompts_by_max_tokens: dict[int, list[list[int]]] = {}
     fixtures_by_max_tokens: dict[int, list[Fixture]] = {}
+    warmup_prompt_batch: list[list[int]] | None = None
+    warmup_max_tokens: int | None = None
     chrf = CHRF()
     fixture_count = 0
     for fixture in fixtures:
         fixture_max_tokens = max_tokens_for_fixture(config, fixture)
-        prompts_by_max_tokens.setdefault(fixture_max_tokens, []).append(
-            build_prompt(tokenizer, config, fixture.source_text)
-        )
+        prompt = build_prompt(tokenizer, config, fixture.source_text)
+        if warmup_prompt_batch is None:
+            warmup_prompt_batch = [prompt]
+            warmup_max_tokens = fixture_max_tokens
+        prompts_by_max_tokens.setdefault(fixture_max_tokens, []).append(prompt)
         fixtures_by_max_tokens.setdefault(fixture_max_tokens, []).append(fixture)
         fixture_count += 1
 
     for _ in range(config.warmup_runs):
-        for fixture_max_tokens, prompt_batch in prompts_by_max_tokens.items():
-            generate_fn(model, tokenizer, prompt_batch, max_tokens=fixture_max_tokens)
+        if warmup_prompt_batch is not None and warmup_max_tokens is not None:
+            generate_fn(
+                model,
+                tokenizer,
+                warmup_prompt_batch,
+                max_tokens=warmup_max_tokens,
+            )
 
     reset = getattr(mx, "reset_peak_memory", None)
     if callable(reset):
