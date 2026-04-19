@@ -6,7 +6,7 @@
   "dataset_file": "en-bn_IN.jsonl",
   "dataset_source_field": "target",
   "dataset_reference_field": "source",
-  "dataset_fixture_limit": 8,
+  "dataset_fixture_limit": 16,
   "dataset_skip_bad_source": true,
   "max_new_tokens": 2048,
   "warmup_runs": 1,
