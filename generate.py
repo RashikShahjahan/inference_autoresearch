@@ -6,6 +6,7 @@ import json
 import time
 from collections import deque
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any, Callable, List, Optional, Sequence, Tuple, Union
 
 import mlx.core as mx
@@ -959,6 +960,82 @@ def generate_text(model, tokenizer, prompt_tokens_batch, *, max_tokens: int):
     ]
 
 
+def profile_batch_generate_metal(
+    model: nn.Module,
+    tokenizer: PreTrainedTokenizer,
+    prompts: List[List[int]],
+    *,
+    max_tokens: Union[int, List[int]] = 128,
+    trace_path: Union[str, Path] = "state/batch_generate_profile.gputrace",
+    warmup: bool = True,
+    **kwargs,
+) -> dict[str, Any]:
+    """Capture a single representative ``batch_generate`` call as a Metal trace."""
+    if not mx.metal.is_available():
+        raise RuntimeError("Metal profiling requires an Apple Silicon / Metal device")
+
+    trace_path = Path(trace_path)
+    if trace_path.suffix != ".gputrace":
+        raise ValueError("trace_path must end with .gputrace")
+    trace_path.parent.mkdir(parents=True, exist_ok=True)
+
+    synchronize = getattr(mx, "synchronize", None)
+    reset_peak_memory = getattr(mx, "reset_peak_memory", None)
+    get_peak_memory = getattr(mx, "get_peak_memory", None)
+
+    if warmup:
+        batch_generate(
+            model,
+            tokenizer,
+            prompts,
+            max_tokens=max_tokens,
+            **kwargs,
+        )
+        if callable(synchronize):
+            synchronize()
+
+    if callable(reset_peak_memory):
+        reset_peak_memory()
+    else:
+        mx.metal.reset_peak_memory()
+    if callable(synchronize):
+        synchronize()
+
+    started = time.perf_counter()
+    capture_started = False
+    try:
+        mx.metal.start_capture(str(trace_path))
+        capture_started = True
+        response = batch_generate(
+            model,
+            tokenizer,
+            prompts,
+            max_tokens=max_tokens,
+            **kwargs,
+        )
+        if callable(synchronize):
+            synchronize()
+    finally:
+        if capture_started:
+            mx.metal.stop_capture()
+
+    elapsed = time.perf_counter() - started
+    peak_memory_bytes = (
+        int(get_peak_memory())
+        if callable(get_peak_memory)
+        else int(mx.metal.get_peak_memory())
+    )
+
+    return {
+        "trace_path": str(trace_path),
+        "prompt_count": len(prompts),
+        "output_tokens": sum(len(token_ids) for token_ids in response.token_ids),
+        "elapsed_seconds": round(elapsed, 4),
+        "peak_metal_mb": round(peak_memory_bytes / 1024 / 1024, 1),
+        "warmup": warmup,
+    }
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Benchmark the current generate.py")
     parser.add_argument(
@@ -966,14 +1043,28 @@ def build_parser() -> argparse.ArgumentParser:
         default="manual run",
         help="Short description of the current experiment",
     )
+    parser.add_argument(
+        "--metal-profile-path",
+        default=None,
+        help="Write a Metal GPU trace for one representative batch_generate call",
+    )
+    parser.add_argument(
+        "--metal-profile-fixture-index",
+        type=int,
+        default=0,
+        help="Fixture index to use for representative Metal profiling",
+    )
     return parser
 
 
 def main() -> int:
     from prepare import (
+        build_prompt,
         compare_candidate,
         load_config,
         load_fixtures,
+        load_model_and_tokenizer,
+        max_tokens_for_fixture,
         require_memory_limit,
     )
 
@@ -983,6 +1074,26 @@ def main() -> int:
     config = load_config()
     fixtures = load_fixtures()
     require_memory_limit(config)
+
+    if args.metal_profile_path is not None:
+        fixture_index = args.metal_profile_fixture_index
+        if fixture_index < 0 or fixture_index >= len(fixtures):
+            raise ValueError(
+                f"metal profile fixture index {fixture_index} is out of range for {len(fixtures)} fixtures"
+            )
+
+        model, tokenizer = load_model_and_tokenizer(config)
+        fixture = fixtures[fixture_index]
+        prompt = build_prompt(tokenizer, config, fixture.source_text)
+        result = profile_batch_generate_metal(
+            model,
+            tokenizer,
+            [prompt],
+            max_tokens=max_tokens_for_fixture(config, fixture),
+            trace_path=args.metal_profile_path,
+        )
+        print(json.dumps(result, indent=2))
+        return 0
 
     result = compare_candidate(
         config,

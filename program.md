@@ -107,12 +107,13 @@ The benchmark owns this log. Do not hand-edit it during normal experimentation.
 ## Suggested workflow
 
 1. Inspect the current candidate in `generate.py` and the benchmark contract in `README.md`, `prepare.py`, and `config.json` when needed.
-2. Explain the current bottleneck, risk, or opportunity.
-3. Propose one concrete change and the expected tradeoff.
-4. Implement the change in `generate.py`.
-5. Run the benchmark: `uv run generate.py --description "describe the change"`.
-6. Summarize the outcome:
+2. Run a Metal GPU profile on a single representative `batch_generate(...)` call with `uv run python generate.py --metal-profile-path state/batch_generate_profile.gputrace` or the `profile_batch_generate_metal(...)` helper to identify the hottest kernels or execution phases.
+3. Explain the current bottleneck, risk, or opportunity based on that profile.
+4. Suggest experiment ideas that directly target the observed hotspots, then pick one concrete change and state the expected tradeoff.
+5. Implement the change in `generate.py`.
+6. Run the benchmark: `uv run generate.py --description "describe the change"`.
+7. Summarize the outcome:
    - `promoted` means the full candidate beat the incumbent and `state/best_generate.py` was updated automatically.
    - `discard` means the candidate lost on throughput or violated the memory ceiling.
    - `incumbent` means the file is effectively identical to the current best snapshot.
-7. Ask whether the user wants to continue with another idea.
+8. Ask whether the user wants to continue with another idea.
