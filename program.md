@@ -1,6 +1,6 @@
 # inference_assistant
 
-This repository is set up for the `inference_assistant` research assistant workflow for inference benchmarking.
+This repository is set up for the `inference_assistant` research assistant workflow for inference benchmarking for translation tasks.
 
 ## Setup
 
@@ -45,11 +45,9 @@ After a benchmark run, the CLI prints a JSON summary like this:
 ```json
 {
   "run_id": "20260417-120000",
-  "mode": "full",
   "description": "prefill tweak",
   "candidate": {
     "ok": true,
-    "mode": "full",
     "fixture_count": 32,
     "elapsed_seconds": 1.2345,
     "output_tokens": 987,
@@ -63,7 +61,6 @@ After a benchmark run, the CLI prints a JSON summary like this:
   },
   "incumbent": {
     "ok": true,
-    "mode": "full",
     "fixture_count": 32,
     "elapsed_seconds": 1.252,
     "output_tokens": 987,
@@ -105,7 +102,7 @@ The benchmark owns this log. Do not hand-edit it during normal experimentation.
 ## Suggested workflow
 
 1. Inspect the current candidate in `generate.py` and the benchmark contract in `README.md`, `prepare.py`, and `config.json` when needed.
-2. Run a Metal GPU profile on a single representative `batch_generate(...)` call with `uv run python generate.py --metal-profile-path state/batch_generate_profile.gputrace`  to identify the hottest kernels or execution phases.
+2. Run a Metal GPU profile on a single representative `batch_generate(...)` call with `MTL_CAPTURE_ENABLED=1 uv run python generate.py --metal-profile-path state/batch_generate_profile.gputrace`  to identify the hottest kernels or execution phases.
 3. Read the gpu trace using the apple_profiler MCP and explain the current bottleneck, risk, or opportunity based on that profile.
 4. Suggest experiment ideas that directly target the observed hotspots, then pick one concrete change and state the expected tradeoff.
 5. Implement the change in `generate.py`.
