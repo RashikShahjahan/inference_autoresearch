@@ -36,9 +36,9 @@ export async function runPythonTool(
     )
   }
 
-  return {
-    exitCode,
-    stderr: trimmedStderr || null,
-    result,
+  if (exitCode !== 0) {
+    throw new Error(trimmedStderr || `${scriptName} exited with code ${exitCode}`)
   }
+
+  return result
 }

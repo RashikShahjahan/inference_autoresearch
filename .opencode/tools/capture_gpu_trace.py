@@ -1,18 +1,33 @@
 from __future__ import annotations
 
 import argparse
+import contextlib
+import io
 import json
+import sys
+from pathlib import Path
 
-from generate import batch_generate
-from inference_workflow import profile_batch_generate_metal
-from prepare import (
-    build_prompt,
-    load_config,
-    load_fixtures,
-    load_model_and_tokenizer,
-    max_tokens_for_fixture,
-    require_memory_limit,
-)
+WORKSPACE_ROOT = Path(__file__).resolve().parents[2]
+if str(WORKSPACE_ROOT) not in sys.path:
+    sys.path.insert(0, str(WORKSPACE_ROOT))
+
+
+@contextlib.contextmanager
+def _buffer_stderr_on_success():
+    buffer = io.StringIO()
+    with contextlib.redirect_stderr(buffer):
+        try:
+            yield
+        except Exception:
+            sys.stderr.write(buffer.getvalue())
+            raise
+
+
+def _tool_result(payload: dict) -> dict:
+    return {
+        "output": json.dumps(payload, indent=2),
+        "metadata": payload,
+    }
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -33,7 +48,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--metal-profile-fixture-count",
         type=int,
-        default=8,
+        default=1,
         help="Number of fixtures to profile as one representative batch",
     )
     return parser
@@ -43,45 +58,57 @@ def main() -> int:
     parser = build_parser()
     args = parser.parse_args()
 
-    config = load_config()
-    fixtures = load_fixtures()
-    require_memory_limit(config)
-
-    fixture_index = args.metal_profile_fixture_index
-    if fixture_index < 0 or fixture_index >= len(fixtures):
-        raise ValueError(
-            f"metal profile fixture index {fixture_index} is out of range for {len(fixtures)} fixtures"
-        )
-    fixture_count = args.metal_profile_fixture_count
-    if fixture_count <= 0:
-        raise ValueError("metal profile fixture count must be positive")
-
-    selected_fixtures = fixtures[fixture_index : fixture_index + fixture_count]
-    if len(selected_fixtures) != fixture_count:
-        raise ValueError(
-            f"metal profile fixture range [{fixture_index}, {fixture_index + fixture_count}) "
-            f"is out of range for {len(fixtures)} fixtures"
+    with _buffer_stderr_on_success():
+        from generate import batch_generate
+        from inference_workflow import profile_batch_generate_metal
+        from prepare import (
+            build_prompt,
+            load_config,
+            load_fixtures,
+            load_model_and_tokenizer,
+            max_tokens_for_fixture,
+            require_memory_limit,
         )
 
-    model, tokenizer = load_model_and_tokenizer(config)
-    prompts = [
-        build_prompt(tokenizer, config, fixture.source_text)
-        for fixture in selected_fixtures
-    ]
-    max_tokens = [
-        max_tokens_for_fixture(config, fixture)
-        for fixture in selected_fixtures
-    ]
-    result = profile_batch_generate_metal(
-        batch_generate,
-        model,
-        tokenizer,
-        prompts,
-        max_tokens=max_tokens,
-        trace_path=args.metal_profile_path,
-    )
-    print(json.dumps(result, indent=2))
-    return 0
+        config = load_config()
+        fixtures = load_fixtures()
+        require_memory_limit(config)
+
+        fixture_index = args.metal_profile_fixture_index
+        if fixture_index < 0 or fixture_index >= len(fixtures):
+            raise ValueError(
+                f"metal profile fixture index {fixture_index} is out of range for {len(fixtures)} fixtures"
+            )
+        fixture_count = args.metal_profile_fixture_count
+        if fixture_count <= 0:
+            raise ValueError("metal profile fixture count must be positive")
+
+        selected_fixtures = fixtures[fixture_index : fixture_index + fixture_count]
+        if len(selected_fixtures) != fixture_count:
+            raise ValueError(
+                f"metal profile fixture range [{fixture_index}, {fixture_index + fixture_count}) "
+                f"is out of range for {len(fixtures)} fixtures"
+            )
+
+        model, tokenizer = load_model_and_tokenizer(config)
+        prompts = [
+            build_prompt(tokenizer, config, fixture.source_text)
+            for fixture in selected_fixtures
+        ]
+        max_tokens = [
+            max_tokens_for_fixture(config, fixture)
+            for fixture in selected_fixtures
+        ]
+        result = profile_batch_generate_metal(
+            batch_generate,
+            model,
+            tokenizer,
+            prompts,
+            max_tokens=max_tokens,
+            trace_path=args.metal_profile_path,
+        )
+        print(json.dumps(_tool_result(result), indent=2))
+        return 0
 
 
 if __name__ == "__main__":
