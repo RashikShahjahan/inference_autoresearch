@@ -659,6 +659,19 @@ class BatchGenerator:
         else:
             self._old_wired_limit = None
 
+    @staticmethod
+    def _pending_sequence_length(sequence) -> int:
+        return sum(len(segment) for segment in sequence[1])
+
+    def _pop_next_sequences(self, n: int):
+        if n <= 0:
+            return []
+
+        pending = sorted(self._unprocessed_sequences, key=self._pending_sequence_length)
+        selected = pending[:n]
+        self._unprocessed_sequences = deque(pending[n:])
+        return selected
+
     def close(self):
         if self._old_wired_limit is not None:
             mx.synchronize(generation_stream)
@@ -783,8 +796,7 @@ class BatchGenerator:
         max_tokens = []
         state_machines = []
 
-        for _ in range(n):
-            sequence = self._unprocessed_sequences.popleft()
+        for sequence in self._pop_next_sequences(n):
             uids.append(sequence[0])
             caches.append(sequence[3])
             tokens.append(sequence[4])
