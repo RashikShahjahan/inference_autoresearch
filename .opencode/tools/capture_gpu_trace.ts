@@ -9,12 +9,6 @@ export default tool({
       .string()
       .default("state/batch_generate_profile.gputrace")
       .describe("Output .gputrace path relative to the repo root or absolute"),
-    fixture_index: tool.schema
-      .number()
-      .int()
-      .nonnegative()
-      .default(0)
-      .describe("Fixture index to use for the representative batch_generate call"),
     fixture_count: tool.schema
       .number()
       .int()
@@ -28,8 +22,6 @@ export default tool({
       [
         "--metal-profile-path",
         args.trace_path,
-        "--metal-profile-fixture-index",
-        String(args.fixture_index),
         "--metal-profile-fixture-count",
         String(args.fixture_count),
       ],

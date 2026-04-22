@@ -40,12 +40,6 @@ def build_parser() -> argparse.ArgumentParser:
         help="Write a Metal GPU trace for one representative batch_generate call",
     )
     parser.add_argument(
-        "--metal-profile-fixture-index",
-        type=int,
-        default=0,
-        help="First fixture index to use for representative Metal profiling",
-    )
-    parser.add_argument(
         "--metal-profile-fixture-count",
         type=int,
         default=1,
@@ -66,27 +60,19 @@ def main() -> int:
             load_config,
             load_fixtures,
             load_model_and_tokenizer,
-            require_memory_limit,
         )
 
         config = load_config()
         fixtures = load_fixtures()
-        require_memory_limit(config)
 
-        fixture_index = args.metal_profile_fixture_index
-        if fixture_index < 0 or fixture_index >= len(fixtures):
-            raise ValueError(
-                f"metal profile fixture index {fixture_index} is out of range for {len(fixtures)} fixtures"
-            )
         fixture_count = args.metal_profile_fixture_count
         if fixture_count <= 0:
             raise ValueError("metal profile fixture count must be positive")
 
-        selected_fixtures = fixtures[fixture_index : fixture_index + fixture_count]
+        selected_fixtures = fixtures[:fixture_count]
         if len(selected_fixtures) != fixture_count:
             raise ValueError(
-                f"metal profile fixture range [{fixture_index}, {fixture_index + fixture_count}) "
-                f"is out of range for {len(fixtures)} fixtures"
+                f"metal profile fixture count {fixture_count} exceeds available fixtures {len(fixtures)}"
             )
 
         model, tokenizer = load_model_and_tokenizer(config)
