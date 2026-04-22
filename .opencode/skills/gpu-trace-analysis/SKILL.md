@@ -34,7 +34,7 @@ Use me when you want actionable performance insights from trace data, especially
 
 Identify the exact inference window you care about.
 
-From CLI data, locate the region using one or more of:
+Locate the region using one or more of:
 
 - the target process name
 - known function names
@@ -186,7 +186,7 @@ Signals:
 - GPU idle intervals align with CPU waits, sync calls, or result reads
 - repeated host-side pauses before more GPU work is submitted
 
-In CLI analysis, these patterns show up as counts, grouped durations, gap statistics, and event-sequence structure.
+These patterns show up as counts, grouped durations, gap statistics, and event-sequence structure.
 
 ### 6. Prioritize and Hypothesize
 
@@ -294,4 +294,3 @@ Top operations by total time:
 - Prefer direct measurements over guesses.
 - If exact values are unavailable, state that clearly and provide the best bounded estimate you can.
 - Tie every recommendation back to evidence from the trace.
-- For this repository, end by proposing the 3 most promising `generate.py` changes before implementation.
