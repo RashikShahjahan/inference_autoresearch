@@ -53,7 +53,7 @@ def load_config() -> Config:
         dataset_fixture_limit=(
             int(payload["dataset_fixture_limit"])
             if payload.get("dataset_fixture_limit") is not None
-            else None
+            else 1
         ),
         max_new_tokens=int(payload["max_new_tokens"]),
         max_peak_metal_mb=max_peak_metal_mb,
@@ -65,7 +65,7 @@ def require_memory_limit(config: Config) -> None:
         raise ValueError("config.json must set max_peak_metal_mb to a positive value")
 
 
-def load_fixtures() -> list[Fixture]:
+def load_fixtures(fixture_limit: int) -> list[Fixture]:
     from huggingface_hub import hf_hub_download, list_repo_files
 
     config = load_config()
@@ -81,13 +81,12 @@ def load_fixtures() -> list[Fixture]:
             cache_dir=DATASET_CACHE_DIR,
         )
     )
-    row_limit = config.dataset_fixture_limit
     fixtures: list[Fixture] = []
 
     for line_number, raw_line in enumerate(
         dataset_path.read_text(encoding="utf-8").splitlines(), start=1
     ):
-        if row_limit is not None and line_number > row_limit:
+        if line_number > fixture_limit:
             break
 
         payload = json.loads(raw_line)
@@ -153,7 +152,7 @@ def promote_candidate():
 def main() -> int:
     config = load_config()
     require_memory_limit(config)
-    load_fixtures()
+    load_fixtures(config.dataset_fixture_limit)
     promote_candidate()
     ensure_results_header()
     print(

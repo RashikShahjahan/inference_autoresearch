@@ -1,6 +1,6 @@
 ---
-name: cli-trace-analysis
-description: Analyze CLI-exported GPU or Metal traces step by step and turn them into prioritized optimization actions.
+name: gpu-trace-analysis
+description: Analyze GPU traces step by step and turn them into prioritized optimization actions.
 compatibility: opencode
 metadata:
   audience: performance-engineering
@@ -9,7 +9,7 @@ metadata:
 
 ## What I do
 
-I analyze a `.gputrace` bundle without relying on the Instruments GUI.
+I analyze a `.gputrace`.
 I follow a fixed 6-step reasoning process:
 
 1. Establish the baseline inference window.
@@ -23,12 +23,10 @@ Use me when you want actionable performance insights from trace data, especially
 
 ## Repo-Specific Guidance
 
-- Prefer the repo-local `.gputrace` tools over GUI inspection.
 - If no trace exists yet, start by using `capture_gpu_trace`.
 - Begin with `trace_open` to summarize the `.gputrace` bundle structure.
 - Use `trace_search` to locate kernel names, labels, signposts, and repeated operation names in plist, json, sqlite, or binary string data.
 - If `trace_open` reports SQLite databases inside the bundle, use `trace_sqlite_query` for targeted read-only inspection.
-- These repo-local tools are intentionally focused on the `.gputrace` bundles captured in this repository.
 
 ## Workflow
 

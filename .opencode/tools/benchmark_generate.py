@@ -50,7 +50,7 @@ def main() -> int:
         from prepare import load_config, load_fixtures, require_memory_limit
 
         config = load_config()
-        fixtures = load_fixtures()
+        fixtures = load_fixtures(config.dataset_fixture_limit)
         require_memory_limit(config)
 
         result = compare_candidate(config, fixtures, args.description, generate_text)

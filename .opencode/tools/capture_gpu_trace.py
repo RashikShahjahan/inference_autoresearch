@@ -63,16 +63,15 @@ def main() -> int:
         )
 
         config = load_config()
-        fixtures = load_fixtures()
 
         fixture_count = args.metal_profile_fixture_count
         if fixture_count <= 0:
             raise ValueError("metal profile fixture count must be positive")
 
-        selected_fixtures = fixtures[:fixture_count]
+        selected_fixtures = load_fixtures(fixture_count)
         if len(selected_fixtures) != fixture_count:
             raise ValueError(
-                f"metal profile fixture count {fixture_count} exceeds available fixtures {len(fixtures)}"
+                f"metal profile fixture count {fixture_count} exceeds available fixtures {len(selected_fixtures)}"
             )
 
         model, tokenizer = load_model_and_tokenizer(config)
