@@ -10,14 +10,13 @@ metadata:
 ## What I do
 
 I analyze Apple GPU and Metal traces using `xctrace` through the `bash` tool.
-I follow a fixed 6-step reasoning process:
+I follow a fixed 5-step reasoning process:
 
 1. Establish the baseline inference window.
 2. Identify the critical path.
 3. Measure time attribution.
-4. Correlate trace events with model architecture.
-5. Identify inefficiency patterns.
-6. Prioritize and hypothesize optimizations.
+4. Record trace-observed inefficiencies.
+5. Prioritize and hypothesize optimizations.
 
 Use me when you want actionable performance insights from trace data and you can inspect that trace with `xctrace`.
 
@@ -102,11 +101,7 @@ Measure or estimate from exported tables:
 - CPU activity around command submission
 - whether kernels are tightly packed or separated by waits
 
-Rules of thumb:
-
-- If GPU activity occupies most of the window, classify it as GPU-bound.
-- If kernels are short and separated by meaningful idle gaps while CPU stays active, classify it as CPU-bound or submission-bound.
-- If both are substantial, classify it as mixed.
+Classify the window using the measured distribution of GPU active time, GPU idle gaps, and CPU submission activity. State the evidence for the classification instead of relying on fixed thresholds alone.
 
 Compute when the data is available:
 
@@ -153,75 +148,27 @@ other               --       6.0       --       14.3%
 
 Optimize by time share, not by event count alone.
 
-### 4. Correlate Trace Events With Model Architecture
+### 4. Record Trace-Observed Inefficiencies
 
-Compare observed event counts with expected model operations.
+Only include issues that are directly supported by exported trace data. Do not rely on a fixed anti-pattern catalog or numeric thresholds.
 
-Count major kernel categories such as:
+Look for and record any of the following when they are present in the trace:
 
-- matmul
-- softmax
-- layer norm
-- add
-- copy or blit
-- attention-related kernels
+- repeated GPU idle gaps inside the inference window
+- repeated CPU submission or synchronization waits
+- transfer or blit events that take measurable time
+- extra kernel launches or repeated event sequences within the inference window
+- repeated short kernel groups that coincide with idle gaps or host-side waits
 
-Then compare observed counts with what the model architecture should roughly produce.
+For each issue you report, include:
 
-Example:
+- the specific trace evidence
+- where it appears in the inference window
+- why it matters for end-to-end inference time
 
-```python
-expected_matmuls = 6 * (3 + 2)  # 6 layers, 3 attention matmuls, 2 FFN matmuls
-# = 30
-actual_matmuls = 36
-```
+If the trace does not support a particular issue category, say so rather than inferring it.
 
-Interpretation:
-
-- `actual ~= expected`: behavior is plausible
-- `actual >> expected`: extra fragmentation, unfused ops, or repeated passes
-- `actual << expected`: some work may already be fused
-
-
-### 5. Identify Inefficiency Patterns
-
-Detect anti-patterns from the event stream.
-
-Pattern 1: Fragmented command buffers
-
-Signals:
-
-- many short kernels
-- repeated small gaps between kernel batches
-- high kernel count with low average duration
-
-Heuristic:
-
-- If many kernels are under `1 ms` and separated by frequent `0.1-1 ms` gaps, suspect submission or fragmentation overhead.
-
-Pattern 2: Memory transfer bottlenecks
-
-Signals:
-
-- frequent blit, copy, or transfer events
-- transfer time is a meaningful fraction of total runtime
-
-Pattern 3: Imbalanced kernel duration
-
-Signal:
-
-- one kernel family consumes more than `40%` of total runtime
-
-Pattern 4: CPU-GPU synchronization points
-
-Signals:
-
-- GPU idle intervals align with CPU waits, sync calls, or result reads
-- repeated host-side pauses before more GPU work is submitted
-
-These patterns show up as durations, counts, gap structure, transfer markers, and event-sequence structure.
-
-### 6. Prioritize and Hypothesize
+### 5. Prioritize and Hypothesize
 
 Turn the measurements into an optimization plan.
 
@@ -238,10 +185,10 @@ Example hypothesis:
 Bottleneck: fragmented matmul-heavy execution
 Evidence:
 - matmul kernels = 24 ms / 42 ms total (57%)
-- 36 matmul launches vs 30 expected
+- repeated matmul launch groups within the same inference window
 - repeated 0.5-1.0 ms gaps between kernel groups
 Expected improvement:
-- 10-25% from reducing launch fragmentation and using fused ops
+- reduced end-to-end inference time if launch fragmentation and synchronization overhead are lowered
 Proposed fix:
 - replace manual attention sequence with fused MLX attention path
 - reduce eager sync points
@@ -249,23 +196,6 @@ Proposed fix:
 ```
 
 Focus the recommendations on code changes that can plausibly be made in `generate.py` or the generation flow around it. Do not stop at trace description; convert the trace evidence into the smallest high-leverage code changes.
-
-## Decision Tree
-
-Ask these questions in order:
-
-1. Does GPU active time occupy most of the inference window?
-2. Does one kernel family consume more than `40%` of total time?
-3. Are there many small kernels?
-4. Are there frequent GPU idle gaps?
-
-Interpretation:
-
-- Yes to 1: GPU-bound
-- No to 1: CPU-bound or mixed
-- Yes to 2: optimize that operation first
-- Yes to 3: consider fusion, batching, or graph compilation
-- Yes to 4: investigate CPU overhead or synchronization
 
 
 ## Output Template
@@ -303,18 +233,14 @@ Top operations by total time:
 |          |       |          |        |                |
 |          |       |          |        |                |
 
-## 4. Architecture Correlation
-- Expected operation counts: ___
-- Observed operation counts: ___
-- Interpretation: ___
+## 4. Trace-Observed Issues
+- GPU idle gaps: ___
+- Transfer or blit events: ___
+- CPU submission or synchronization waits: ___
+- Extra launches or repeated event sequences: ___
+- Dominant issue: ___
 
-## 5. Inefficiency Patterns
-- Fragmentation signals: ___
-- Transfer overhead: ___
-- Synchronization points: ___
-- Dominant bottleneck pattern: ___
-
-## 6. Prioritized Actions
+## 5. Prioritized Actions
 1. ___
 2. ___
 3. ___
