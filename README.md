@@ -21,6 +21,20 @@ uv run prepare.py
 Then run the `benchmark_generate` OpenCode tool with `description="candidate change"`.
 
 
+## Trace analysis
+
+Use the `capture_gpu_trace` OpenCode tool to record a representative Instruments Metal trace at
+`state/batch_generate_profile.trace`.
+
+Inspect the trace contents with the `trace_toc` OpenCode tool, then use `xctrace export` from `bash`
+for targeted table exports. If the active developer directory is still Command Line Tools, prefix
+direct `xctrace` commands with:
+
+```bash
+DEVELOPER_DIR="/Applications/Xcode.app/Contents/Developer"
+```
+
+
 ## Config
 
 `config.json` defines the benchmark contract:

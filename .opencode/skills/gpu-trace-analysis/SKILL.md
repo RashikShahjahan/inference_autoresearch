@@ -9,7 +9,7 @@ metadata:
 
 ## What I do
 
-I analyze a `.gputrace`.
+I analyze Apple GPU and Metal traces using `xctrace` through the `bash` tool.
 I follow a fixed 6-step reasoning process:
 
 1. Establish the baseline inference window.
@@ -19,14 +19,50 @@ I follow a fixed 6-step reasoning process:
 5. Identify inefficiency patterns.
 6. Prioritize and hypothesize optimizations.
 
-Use me when you want actionable performance insights from trace data, especially in this repository after `capture_gpu_trace` has been run.
+Use me when you want actionable performance insights from trace data and you can inspect that trace with `xctrace`.
+
+## Preconditions
+
+- `xctrace` must be runnable from `bash`. This requires full Xcode, not just Command Line Tools.
+- If Command Line Tools is the active developer directory, use `DEVELOPER_DIR="/Applications/Xcode.app/Contents/Developer"` for direct `xctrace` commands.
+- Preferred input is an Instruments `.trace` document. `xctrace export` is documented for `.trace` files.
+- If no `.trace` exists yet, start by using `capture_gpu_trace`.
 
 ## Repo-Specific Guidance
 
-- If no trace exists yet, start by using `capture_gpu_trace`.
-- Begin with `trace_open` to summarize the `.gputrace` bundle structure.
-- Use `trace_search` to locate kernel names, labels, signposts, and repeated operation names in plist, json, sqlite, or binary string data.
-- If `trace_open` reports SQLite databases inside the bundle, use `trace_sqlite_query` for targeted read-only inspection.
+- Use the `bash` tool to run `xctrace` directly.
+- Start with the `trace_toc` tool to inspect the trace contents before making any claims.
+- Export only the tables needed for analysis with `xctrace export --xpath ...`.
+- Keep the work focused on analysis: measure the bottleneck, explain it, and turn it into concrete `generate.py` optimization ideas.
+- Tie recommendations back to the repository goal: improve `output_tokens_per_sec` without regressing quality or exceeding memory limits.
+
+## Command Workflow
+
+1. Verify that `xctrace` is available.
+
+```bash
+DEVELOPER_DIR="/Applications/Xcode.app/Contents/Developer" xctrace version
+```
+
+2. Export the trace table of contents.
+
+Use the `trace_toc` tool first. If you need the raw command, this is the equivalent:
+
+```bash
+DEVELOPER_DIR="/Applications/Xcode.app/Contents/Developer" xctrace export --input "path/to/trace.trace" --toc
+```
+
+3. Inspect the exported TOC and identify the run number, process, and relevant data tables.
+
+4. Export only the entities needed for analysis.
+
+```bash
+DEVELOPER_DIR="/Applications/Xcode.app/Contents/Developer" xctrace export --input "path/to/trace.trace" --xpath '/trace-toc/run[@number="1"]/data/table[@schema="..."]'
+```
+
+5. Repeat exports until you can answer the analysis questions below with evidence.
+
+Do not guess table schemas in advance. Use the TOC first, then export the specific runs and tables that the trace actually contains.
 
 ## Workflow
 
@@ -46,6 +82,9 @@ Record:
 - inference start timestamp
 - inference end timestamp
 - total duration in ms
+- run number
+- process name
+- exported tables used as evidence
 
 Example:
 
@@ -56,13 +95,13 @@ end   = 12.226 s
 total = 42.0 ms
 ```
 
-This window is the optimization target. All other measurements are relative to it.
+Use signposts, process names, command-buffer labels, or repeated inference markers to isolate the window. If there are multiple plausible windows, state which one you chose and why.
 
 ### 2. Identify the Critical Path
 
 Determine whether total runtime is dominated by GPU execution, CPU-side submission/setup delays, or both.
 
-Compute or estimate:
+Measure or estimate from exported tables:
 
 - total GPU execution time in the inference window
 - GPU idle gaps between kernel groups
@@ -75,11 +114,12 @@ Rules of thumb:
 - If kernels are short and separated by meaningful idle gaps while CPU stays active, classify it as CPU-bound or submission-bound.
 - If both are substantial, classify it as mixed.
 
-Instead of visually checking track density, compute:
+Compute when the data is available:
 
 - sum of GPU kernel durations
 - union of GPU busy intervals when possible
 - total gap time between kernels or encoder groups
+- CPU-side setup or submission time where exposed
 
 Example:
 
@@ -92,7 +132,7 @@ Conclusion: primarily GPU-bound, with some CPU submission overhead
 
 ### 3. Measure Time Attribution
 
-Group events by operation or kernel name and sum total duration.
+Group events by operation or kernel family and sum total duration.
 
 For GPU-bound cases:
 
@@ -102,7 +142,7 @@ For GPU-bound cases:
 
 For CPU-bound cases:
 
-- group CPU-side functions, stacks, or categories
+- group CPU-side functions, stacks, categories, or submission markers
 - identify where submission/setup overhead is going
 
 Preferred table format:
@@ -148,7 +188,7 @@ Interpretation:
 - `actual >> expected`: extra fragmentation, unfused ops, or repeated passes
 - `actual << expected`: some work may already be fused
 
-This comparison is often easier in scripts than by visual inspection.
+This comparison is often easier after exporting structured tables than by visual inspection alone.
 
 ### 5. Identify Inefficiency Patterns
 
@@ -186,7 +226,7 @@ Signals:
 - GPU idle intervals align with CPU waits, sync calls, or result reads
 - repeated host-side pauses before more GPU work is submitted
 
-These patterns show up as counts, grouped durations, gap statistics, and event-sequence structure.
+These patterns show up as durations, counts, gap structure, transfer markers, and event-sequence structure.
 
 ### 6. Prioritize and Hypothesize
 
@@ -215,6 +255,8 @@ Proposed fix:
 - batch operations where possible
 ```
 
+Focus the recommendations on code changes that can plausibly be made in `generate.py` or the generation flow around it. Do not stop at trace description; convert the trace evidence into the smallest high-leverage code changes.
+
 ## Decision Tree
 
 Ask these questions in order:
@@ -241,11 +283,14 @@ Use this exact structure when reporting results:
 # CLI Trace Analysis: [Model Name] - [Date]
 
 ## 1. Baseline
+- Trace file: ___
+- Exported tables used: ___
+- Run number: ___
 - Inference start: ___
 - Inference end: ___
 - Total inference time: ___ ms
 - Hardware: ___
-- Trace source: [export/json/csv/log]
+- Trace source: `xctrace export`
 
 ## 2. Critical Path
 - GPU active time: ___ ms
@@ -290,7 +335,10 @@ Top operations by total time:
 
 ## Working Style
 
+- Use the `trace_toc` tool for TOC export, then `bash` + `xctrace` for targeted table exports.
+- Prefer the `DEVELOPER_DIR="/Applications/Xcode.app/Contents/Developer"` prefix in direct `xctrace` commands unless the environment is already configured.
+- Start with the TOC, then export only the relevant tables.
 - Be quantitative and specific.
 - Prefer direct measurements over guesses.
-- If exact values are unavailable, state that clearly and provide the best bounded estimate you can.
+- If `xctrace` is unavailable or the input is not a `.trace` file, state the blocker immediately.
 - Tie every recommendation back to evidence from the trace.

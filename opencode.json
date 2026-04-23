@@ -3,8 +3,6 @@
   "permission": {
     "benchmark_generate": "allow",
     "capture_gpu_trace": "allow",
-    "trace_open": "allow",
-    "trace_search": "allow",
-    "trace_sqlite_query": "allow"
+    "trace_toc": "allow"
   }
 }
