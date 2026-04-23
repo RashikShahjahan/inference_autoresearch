@@ -13,7 +13,7 @@ export default tool({
       .number()
       .int()
       .positive()
-      .default(1)
+      .default(8)
       .describe("Number of fixtures to include in the representative batch"),
   },
   async execute(args, context) {
