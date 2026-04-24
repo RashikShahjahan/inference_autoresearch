@@ -538,7 +538,7 @@ class GenerationBatch:
         self._num_tokens = [self._num_tokens[idx] for idx in keep]
         self._matcher_states = [self._matcher_states[idx] for idx in keep]
 
-    def next(self) -> List[Response]:
+    def next(self, return_prompt_caches: bool = True) -> List[Response]:
         if not self.uids:
             return []
 
@@ -569,7 +569,9 @@ class GenerationBatch:
                         finish_reason=finish_reason,
                         current_state=current_state,
                         match_sequence=match_sequence,
-                        prompt_cache=self.extract_cache(i),
+                        prompt_cache=(
+                            self.extract_cache(i) if return_prompt_caches else None
+                        ),
                         all_tokens=self.tokens[i],
                     )
                 )
@@ -629,6 +631,7 @@ class BatchGenerator:
         prefill_batch_size: int = 8,
         prefill_step_size: int = 2048,
         max_kv_size: Optional[int] = None,
+        return_prompt_caches: bool = True,
     ):
         self.model = model
         self.max_tokens = max_tokens
@@ -639,6 +642,7 @@ class BatchGenerator:
         self.prefill_batch_size = prefill_batch_size
         self.completion_batch_size = max(completion_batch_size, prefill_batch_size)
         self.max_kv_size = max_kv_size
+        self.return_prompt_caches = return_prompt_caches
 
         self._default_state_machine = SequenceStateMachine(
             {"normal": [(seq, None) for seq in stop_tokens]} if stop_tokens else {},
@@ -838,7 +842,9 @@ class BatchGenerator:
         prompt_responses = []
 
         if len(self._generation_batch) > 0:
-            generation_responses = self._generation_batch.next()
+            generation_responses = self._generation_batch.next(
+                return_prompt_caches=self.return_prompt_caches
+            )
             self._gen_tokens_counter += len(generation_responses)
             self._steps_counter += 1
             if self._steps_counter % 512 == 0:
@@ -950,6 +956,7 @@ def batch_generate(
     gen = BatchGenerator(
         model,
         stop_tokens=[[t] for t in tokenizer.eos_token_ids],
+        return_prompt_caches=return_prompt_caches,
         **kwargs,
     )
 
