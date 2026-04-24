@@ -5,6 +5,7 @@ import contextlib
 import io
 import json
 import os
+import plistlib
 import shutil
 import subprocess
 import sys
@@ -14,8 +15,12 @@ from pathlib import Path
 WORKSPACE_ROOT = Path(__file__).resolve().parents[2]
 TARGET_SCRIPT = Path(__file__).with_name("capture_trace_target.py")
 XCTRACE_TEMPLATE = "Metal System Trace"
+XCTRACE_TEMPLATE_RELATIVE_PATH = Path(
+    "Applications/Instruments.app/Contents/Packages/GPU.instrdst/Contents/Templates/Metal System Trace.tracetemplate"
+)
 MEASUREMENT_DELAY_SECONDS = 2.0
 XCODE_DEVELOPER_DIR = Path("/Applications/Xcode.app/Contents/Developer")
+SHADER_TIMELINE_KEYS = {"shaderprofiler", "shaderprofilerinternal"}
 if str(WORKSPACE_ROOT) not in sys.path:
     sys.path.insert(0, str(WORKSPACE_ROOT))
 
@@ -103,6 +108,60 @@ def ensure_xctrace_available(env: dict[str, str]) -> None:
         ) from exc
 
 
+def resolve_xctrace_template_path(env: dict[str, str]) -> Path:
+    candidates = []
+    developer_dir = env.get("DEVELOPER_DIR")
+    if developer_dir:
+        candidates.append(Path(developer_dir).parent / XCTRACE_TEMPLATE_RELATIVE_PATH)
+    candidates.append(XCODE_DEVELOPER_DIR.parent / XCTRACE_TEMPLATE_RELATIVE_PATH)
+
+    for candidate in candidates:
+        if candidate.exists():
+            return candidate
+
+    raise RuntimeError(
+        "Could not find Xcode's Metal System Trace template needed to enable Shader Timeline"
+    )
+
+
+def write_shader_timeline_template(source: Path, destination: Path) -> int:
+    with source.open("rb") as handle:
+        template = plistlib.load(handle)
+
+    objects = template.get("$objects")
+    if not isinstance(objects, list):
+        raise RuntimeError("Unexpected xctrace template format")
+
+    try:
+        true_uid = plistlib.UID(next(i for i, obj in enumerate(objects) if obj is True))
+    except StopIteration as exc:
+        raise RuntimeError("Unexpected xctrace template format: missing true object") from exc
+
+    changed = 0
+    for obj in objects:
+        if not isinstance(obj, dict):
+            continue
+        keys = obj.get("NS.keys")
+        values = obj.get("NS.objects")
+        if not isinstance(keys, list) or not isinstance(values, list):
+            continue
+
+        for index, key_uid in enumerate(keys):
+            if not isinstance(key_uid, plistlib.UID):
+                continue
+            key = objects[key_uid.data]
+            if key in SHADER_TIMELINE_KEYS and values[index] != true_uid:
+                values[index] = true_uid
+                changed += 1
+
+    if changed == 0:
+        raise RuntimeError("Could not enable Shader Timeline in the xctrace template")
+
+    with destination.open("wb") as handle:
+        plistlib.dump(template, handle, fmt=plistlib.FMT_BINARY)
+    return changed
+
+
 def main() -> int:
     parser = build_parser()
     args = parser.parse_args()
@@ -122,12 +181,18 @@ def main() -> int:
 
         with tempfile.TemporaryDirectory(dir=trace_path.parent) as temp_dir:
             temp_trace_path = Path(temp_dir) / "captured.trace"
+            temp_template_path = Path(temp_dir) / "metal_system_trace_shader_timeline.tracetemplate"
             result_path = Path(temp_dir) / "capture_result.json"
+            template_source_path = resolve_xctrace_template_path(xctrace_env)
+            shader_timeline_template_changes = write_shader_timeline_template(
+                template_source_path,
+                temp_template_path,
+            )
             command = [
                 "xctrace",
                 "record",
                 "--template",
-                XCTRACE_TEMPLATE,
+                str(temp_template_path),
                 "--output",
                 str(temp_trace_path),
                 "--no-prompt",
@@ -177,6 +242,9 @@ def main() -> int:
             result["trace_path"] = str(trace_path)
             result["trace_format"] = "trace"
             result["xctrace_template"] = XCTRACE_TEMPLATE
+            result["shader_timeline_enabled"] = True
+            result["shader_timeline_template_changes"] = shader_timeline_template_changes
+            result["xctrace_template_source"] = str(template_source_path)
             result["developer_dir"] = xctrace_env.get("DEVELOPER_DIR")
 
         print(json.dumps(_tool_result(result), indent=2))
