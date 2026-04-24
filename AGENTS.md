@@ -96,7 +96,7 @@ run_id	candidate_hash	incumbent_hash	mlx_lm_tps	candidate_tps	incumbent_tps	peak
 ```
 
 The benchmark owns this log. Do not hand-edit it during normal experimentation.
-
+The input token length for my use case is approximately equal to the output. Remember this when suggesting optimizations.
 ## Workflow
 
 1. Inspect the current candidate in `generate.py` and the benchmark contract in `README.md`, `prepare.py`, and `config.json` when needed.
