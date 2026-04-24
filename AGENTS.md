@@ -11,9 +11,8 @@ To start or resume a run, work through this checklist:
    - `prepare.py` - fixed benchmark contract, fixture loading, memory checks, incumbent promotion, and results logging. Do not modify during normal experimentation.
    - `generate.py` - the only file you tune.
    - `config.json` - fixed dataset, model, and memory configuration for the current run.
-3. Run `uv run prepare.py` once after changing the benchmark contract or when initializing a fresh workspace.
-4. Verify that `state/best_generate.py` and `results.tsv` exist.
-5. Confirm the benchmark is ready, then summarize the current state for the user.
+3. Use the `benchmark_prepare` tool to validate fixtures, verify `results.tsv`, and seed `state/best_generate.py` if it is missing.
+4. Confirm the benchmark is ready from the `benchmark_prepare` output, then summarize the current state for the user.
 
 ## Working style
 
@@ -34,7 +33,7 @@ Memory is a hard constraint. If a candidate exceeds `max_peak_metal_mb`, it is a
 
 **Simplicity criterion:** all else equal, prefer the simpler change. A small throughput gain is not worth a pile of brittle complexity. If a simpler implementation matches or slightly improves throughput while respecting memory, that is a strong result.
 
-**The first run:** `uv run prepare.py`. 
+**The first run:** use the `benchmark_prepare` tool. It is the safe wrapper around the initialization checks and only overwrites the incumbent when explicitly requested.
 
 ## Output format
 
