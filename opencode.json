@@ -1,8 +1,10 @@
 {
   "$schema": "https://opencode.ai/config.json",
   "permission": {
+    "benchmark_prepare": "allow",
     "benchmark_generate": "allow",
     "capture_trace": "allow",
+    "trace_analyze": "allow",
     "trace_toc": "allow"
   }
 }
