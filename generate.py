@@ -29,6 +29,97 @@ def _right_pad_prompts(prompts, max_length=None):
     return mx.array([p + [0] * (max_length - len(p)) for p in prompts])
 
 
+def _create_causal_mask(
+    N: int,
+    offset: int = 0,
+    window_size: Optional[int] = None,
+    right_padding: Optional[mx.array] = None,
+    left_padding: Optional[mx.array] = None,
+):
+    rinds = mx.arange(offset + N)
+    linds = mx.arange(offset, offset + N) if offset else rinds
+    linds = linds[:, None]
+    rinds = rinds[None]
+    mask = linds >= rinds
+    if window_size is not None:
+        mask = mask & (linds < rinds + window_size)
+    if right_padding is not None:
+        mask = mask & (
+            rinds < mx.expand_dims((offset + N) - right_padding, (1, 2, 3))
+        )
+    if left_padding is not None:
+        mask = mask & (mx.expand_dims(left_padding, (1, 2, 3)) <= rinds)
+    return mask
+
+
+def _create_attention_mask(
+    h, cache=None, window_size: Optional[int] = None, return_array: bool = False
+):
+    N = h.shape[1]
+    if cache and hasattr(cache, "make_mask"):
+        return cache.make_mask(N, return_array=return_array, window_size=window_size)
+    if N == 1:
+        return None
+    if return_array or (window_size and N > window_size):
+        return _create_causal_mask(N, window_size=window_size)
+    return "causal"
+
+
+def _gemma3_prefill_without_lm_head(model, inputs: mx.array, prompt_cache) -> bool:
+    if getattr(model, "model_type", None) != "gemma3":
+        return False
+
+    language_model = getattr(model, "language_model", None)
+    text_model = getattr(language_model, "model", None)
+    if text_model is None or not all(
+        hasattr(text_model, attr)
+        for attr in (
+            "args",
+            "embed_tokens",
+            "layers",
+            "sliding_window_pattern",
+            "window_size",
+        )
+    ):
+        return False
+
+    # Extracted from mlx_lm.models.gemma3_text.Gemma3Model.__call__.
+    # Prefill only needs cache side effects, so skip the unused final norm and lm_head.
+    h = text_model.embed_tokens(inputs)
+    h *= mx.array(text_model.args.hidden_size**0.5, mx.bfloat16).astype(h.dtype)
+
+    if prompt_cache is None:
+        prompt_cache = [None] * len(text_model.layers)
+
+    global_mask = _create_attention_mask(
+        h, prompt_cache[text_model.sliding_window_pattern - 1]
+    )
+
+    if text_model.sliding_window_pattern > 1:
+        sliding_window_mask = _create_attention_mask(
+            h,
+            prompt_cache[0],
+            window_size=text_model.window_size,
+        )
+    else:
+        sliding_window_mask = None
+
+    for i, (layer, c) in enumerate(zip(text_model.layers, prompt_cache)):
+        is_global = (
+            i % text_model.sliding_window_pattern
+            == text_model.sliding_window_pattern - 1
+        )
+        mask = global_mask if is_global else sliding_window_mask
+        h = layer(h, mask, c)
+
+    return True
+
+
+def _prefill_model(model, inputs: mx.array, prompt_cache) -> None:
+    if not _gemma3_prefill_without_lm_head(model, inputs, prompt_cache):
+        model(inputs, cache=prompt_cache)
+
+
 @dataclass
 class BatchStats:
     prompt_tokens: int = 0
@@ -281,7 +372,7 @@ class PromptProcessingBatch:
 
         while tokens.shape[1] > 0:
             n_to_process = min(self.prefill_step_size, tokens.shape[1])
-            self.model(tokens[:, :n_to_process], cache=self.prompt_cache)
+            _prefill_model(self.model, tokens[:, :n_to_process], self.prompt_cache)
             mx.eval([c.state for c in self.prompt_cache])
             mx.clear_cache()
             tokens = tokens[:, n_to_process:]
