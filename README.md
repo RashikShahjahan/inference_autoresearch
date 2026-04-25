@@ -1,6 +1,6 @@
 # inference_assistant
 
-This repo is a compact inference benchmarking setup for optimizing inference throughput on Apple Silicon.
+This repo is a compact inference benchmarking setup for optimizing TranslatedGemma inference throughput on Apple Silicon.
 
 
 ## Quick start
@@ -33,7 +33,7 @@ Inspect the trace contents with the `trace_toc` OpenCode tool, then use the
 
 ## Config
 
-`config.json` defines the benchmark contract:
+`config.json` defines the benchmark contract. The harness is intentionally specialized for TranslatedGemma/Gemma3 text models; other model families are unsupported.
 
 - `model`
 - `source_lang`

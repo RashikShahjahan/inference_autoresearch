@@ -17,6 +17,7 @@ RESULTS_HEADER = (
     "run_id\tcandidate_hash\tincumbent_hash\tmlx_lm_tps\tcandidate_tps\t"
     "incumbent_tps\tpeak_metal_mb\tstatus\tdescription\n"
 )
+SUPPORTED_MODEL_FAMILY = "translategemma"
 
 
 @dataclass(frozen=True)
@@ -65,6 +66,31 @@ def require_memory_limit(config: Config) -> None:
         raise ValueError("config.json must set max_peak_metal_mb to a positive value")
 
 
+def require_supported_model_config(config: Config) -> None:
+    if SUPPORTED_MODEL_FAMILY not in config.model.lower():
+        raise ValueError(
+            "This benchmark harness is specialized for TranslatedGemma models; "
+            f"config.json has model={config.model!r}"
+        )
+
+
+def require_supported_model_runtime(model) -> None:
+    language_model = getattr(model, "language_model", None)
+    text_model = getattr(language_model, "model", None)
+    if (
+        getattr(model, "model_type", None) != "gemma3"
+        or text_model is None
+        or not (
+            hasattr(language_model, "lm_head")
+            or getattr(language_model, "tie_word_embeddings", False)
+        )
+    ):
+        raise ValueError(
+            "Loaded model does not expose the TranslatedGemma/Gemma3 text path "
+            "required by generate.py"
+        )
+
+
 def load_fixtures(fixture_limit: int) -> list[Fixture]:
     from huggingface_hub import hf_hub_download, list_repo_files
 
@@ -107,7 +133,9 @@ def load_fixtures(fixture_limit: int) -> list[Fixture]:
 def load_model_and_tokenizer(config: Config):
     from mlx_lm import load
 
+    require_supported_model_config(config)
     model, tokenizer = load(config.model)
+    require_supported_model_runtime(model)
     tokenizer.add_eos_token("<end_of_turn>")
     return model, tokenizer
 
@@ -151,6 +179,7 @@ def promote_candidate():
 
 def main() -> int:
     config = load_config()
+    require_supported_model_config(config)
     require_memory_limit(config)
     load_fixtures(config.dataset_fixture_limit)
     promote_candidate()

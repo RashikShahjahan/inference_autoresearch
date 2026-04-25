@@ -57,9 +57,12 @@ def main() -> int:
             load_config,
             load_fixtures,
             require_memory_limit,
+            require_supported_model_config,
+            SUPPORTED_MODEL_FAMILY,
         )
 
         config = load_config()
+        require_supported_model_config(config)
         require_memory_limit(config)
         fixtures = load_fixtures(config.dataset_fixture_limit)
 
@@ -82,6 +85,7 @@ def main() -> int:
             "fixture_count": len(fixtures),
             "config": {
                 "model": config.model,
+                "supported_model_family": SUPPORTED_MODEL_FAMILY,
                 "source_lang": config.source_lang,
                 "target_lang": config.target_lang,
                 "dataset_repo": config.dataset_repo,

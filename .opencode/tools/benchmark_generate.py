@@ -47,9 +47,15 @@ def main() -> int:
     with _buffer_stderr_on_success():
         from generate import generate_text
         from inference_workflow import compare_candidate
-        from prepare import load_config, load_fixtures, require_memory_limit
+        from prepare import (
+            load_config,
+            load_fixtures,
+            require_memory_limit,
+            require_supported_model_config,
+        )
 
         config = load_config()
+        require_supported_model_config(config)
         fixtures = load_fixtures(config.dataset_fixture_limit)
         require_memory_limit(config)
 

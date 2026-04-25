@@ -65,26 +65,18 @@ def _create_attention_mask(
     return "causal"
 
 
-def _gemma3_prefill_without_lm_head(model, inputs: mx.array, prompt_cache) -> bool:
-    if getattr(model, "model_type", None) != "gemma3":
-        return False
-
+def _translategemma_parts(model):
     language_model = getattr(model, "language_model", None)
     text_model = getattr(language_model, "model", None)
-    if text_model is None or not all(
-        hasattr(text_model, attr)
-        for attr in (
-            "args",
-            "embed_tokens",
-            "layers",
-            "sliding_window_pattern",
-            "window_size",
-        )
-    ):
-        return False
+    if getattr(model, "model_type", None) != "gemma3" or text_model is None:
+        raise ValueError("generate.py is specialized for TranslatedGemma/Gemma3 models")
 
+    return language_model, text_model
+
+
+def _translategemma_hidden(text_model, inputs: mx.array, prompt_cache):
     # Extracted from mlx_lm.models.gemma3_text.Gemma3Model.__call__.
-    # Prefill only needs cache side effects, so skip the unused final norm and lm_head.
+    # Callers decide whether they need only cache side effects or also logits.
     h = text_model.embed_tokens(inputs)
     h *= mx.array(text_model.args.hidden_size**0.5, mx.bfloat16).astype(h.dtype)
 
@@ -112,12 +104,31 @@ def _gemma3_prefill_without_lm_head(model, inputs: mx.array, prompt_cache) -> bo
         mask = global_mask if is_global else sliding_window_mask
         h = layer(h, mask, c)
 
-    return True
+    return h
 
 
-def _prefill_model(model, inputs: mx.array, prompt_cache) -> None:
-    if not _gemma3_prefill_without_lm_head(model, inputs, prompt_cache):
-        model(inputs, cache=prompt_cache)
+def _translategemma_prefill(text_model, inputs: mx.array, prompt_cache) -> None:
+    _translategemma_hidden(text_model, inputs, prompt_cache)
+
+
+def _translategemma_logits(
+    language_model,
+    text_model,
+    inputs: mx.array,
+    prompt_cache,
+    lengths: Optional[List[int]] = None,
+):
+    h = _translategemma_hidden(text_model, inputs, prompt_cache)
+    if lengths is None or len(set(lengths)) == 1:
+        h = h[:, -1, :]
+    else:
+        last_positions = mx.array([length - 1 for length in lengths], dtype=mx.int32)
+        h = h[mx.arange(h.shape[0]), last_positions, :]
+
+    h = text_model.norm(h)
+    if hasattr(language_model, "lm_head"):
+        return language_model.lm_head(h)
+    return text_model.embed_tokens.as_linear(h)
 
 
 @dataclass
@@ -260,6 +271,7 @@ class PromptProcessingBatch:
         sample_on_logits: bool = False,
     ):
         self.model = model
+        self.language_model, self.text_model = _translategemma_parts(model)
         self.uids = uids
         self.prompt_cache = _merge_caches(caches)
         self.tokens = tokens if tokens is not None else [None] * len(uids)
@@ -347,12 +359,19 @@ class PromptProcessingBatch:
         self.max_tokens = [self.max_tokens[idx] for idx in keep]
         self.state_machines = [self.state_machines[idx] for idx in keep]
 
-    def prompt(self, tokens: List[List[int]]):
+    def can_start_from_prefill(self):
+        return (
+            self.sample_on_logits
+            and not any(self.samplers)
+            and not any(self.logits_processors)
+        )
+
+    def prompt(self, tokens: List[List[int]], return_next_tokens: bool = False):
         if len(self.uids) != len(tokens):
             raise ValueError("The batch length doesn't match the number of inputs")
 
         if not tokens:
-            return
+            return None
 
         for sti, ti in zip(self.tokens, tokens):
             if sti is not None:
@@ -363,6 +382,9 @@ class PromptProcessingBatch:
         padding = [max_length - l for l in lengths]
         max_padding = max(padding)
 
+        if return_next_tokens and max_length > self.prefill_step_size:
+            raise ValueError("Prefill sampling requires the final chunk in one step")
+
         if max_padding > 0:
             tokens = _right_pad_prompts(tokens, max_length=max_length)
             for c in self.prompt_cache:
@@ -370,18 +392,65 @@ class PromptProcessingBatch:
         else:
             tokens = mx.array(tokens)
 
+        next_tokens = None
+        finalized = False
         while tokens.shape[1] > 0:
             n_to_process = min(self.prefill_step_size, tokens.shape[1])
-            _prefill_model(self.model, tokens[:, :n_to_process], self.prompt_cache)
-            mx.eval([c.state for c in self.prompt_cache])
+            prompt_chunk = tokens[:, :n_to_process]
+            if return_next_tokens and n_to_process == tokens.shape[1]:
+                logits = _translategemma_logits(
+                    self.language_model,
+                    self.text_model,
+                    prompt_chunk,
+                    self.prompt_cache,
+                    lengths=lengths,
+                )
+                next_tokens = mx.argmax(logits, axis=-1)
+                if max_padding > 0:
+                    for c in self.prompt_cache:
+                        c.finalize()
+                    finalized = True
+                mx.eval([c.state for c in self.prompt_cache], next_tokens)
+            else:
+                _translategemma_prefill(
+                    self.text_model, prompt_chunk, self.prompt_cache
+                )
+                mx.eval([c.state for c in self.prompt_cache])
             mx.clear_cache()
             tokens = tokens[:, n_to_process:]
 
-        if max_padding > 0:
+        if max_padding > 0 and not finalized:
             for c in self.prompt_cache:
                 c.finalize()
             mx.eval([c.state for c in self.prompt_cache])
             mx.clear_cache()
+
+        return next_tokens
+
+    def start_generation(self, next_tokens: mx.array):
+        generation = GenerationBatch(
+            self.model,
+            self.uids,
+            next_tokens,
+            self.prompt_cache,
+            self.tokens,
+            self.samplers,
+            self.fallback_sampler,
+            self.logits_processors,
+            self.state_machines,
+            self.max_tokens,
+            self.sample_on_logits,
+            prime=False,
+        )
+
+        self.uids = []
+        self.prompt_cache = []
+        self.tokens = []
+        self.samplers = []
+        self.logits_processors = []
+        self.max_tokens = []
+
+        return generation
 
     def generate(self, tokens: List[List[int]]):
         if any(len(t) > 1 for t in tokens):
@@ -462,8 +531,10 @@ class GenerationBatch:
         state_machines: List[SequenceStateMachine],
         max_tokens: List[int],
         sample_on_logits: bool = False,
+        prime: bool = True,
     ):
         self.model = model
+        self.language_model, self.text_model = _translategemma_parts(model)
         self.uids = uids
         self.prompt_cache = prompt_cache
         self.tokens = tokens
@@ -483,7 +554,7 @@ class GenerationBatch:
         self._current_tokens = None
         self._current_logprobs = []
         self._next_tokens = inputs
-        self._next_logprobs = []
+        self._next_logprobs = [] if prime else [None] * len(self.uids)
         self._uses_token_context = any(self.logits_processors)
         self._token_context = (
             [TokenBuffer(t or []) for t in tokens] if self._uses_token_context else []
@@ -491,7 +562,7 @@ class GenerationBatch:
         self._num_tokens = [0] * len(self.uids)
         self._matcher_states = [m.make_state() for m in state_machines]
 
-        if self.uids:
+        if self.uids and prime:
             self._step(emit=False)
 
     def __len__(self):
@@ -540,8 +611,12 @@ class GenerationBatch:
         self._current_logprobs = self._next_logprobs
         inputs = self._current_tokens
 
-        logits = self.model(inputs[:, None], cache=self.prompt_cache)
-        logits = logits[:, -1, :]
+        logits = _translategemma_logits(
+            self.language_model,
+            self.text_model,
+            inputs[:, None],
+            self.prompt_cache,
+        )
 
         token_context = []
         if self._uses_token_context:
@@ -977,6 +1052,23 @@ class BatchGenerator:
                 )
             self._generation_batch.extend(gen_batch)
 
+        fast_start_all = (
+            len(self._currently_processing) > 0
+            and len(self._currently_processing) == len(self._prompt_batch)
+            and self._prompt_batch.can_start_from_prefill()
+            and all(
+                len(seq[0]) == 2
+                and len(seq[0][0]) > 0
+                and len(seq[0][1]) == 1
+                and len(seq[0][0]) + 1 <= self.prefill_step_size
+                for seq in self._currently_processing
+            )
+            and len(
+                {len(seq[0][0]) + len(seq[0][1]) for seq in self._currently_processing}
+            )
+            == 1
+        )
+
         prompts = []
         for i, seq in enumerate(self._currently_processing):
             response = PromptProcessingBatch.Response(
@@ -984,20 +1076,34 @@ class BatchGenerator:
             )
             segments = seq[0]
             n = min(len(segments[0]), self.prefill_step_size)
-            prompts.append(segments[0][:n])
-            segments[0] = segments[0][n:]
-            if len(segments[0]) == 0:
-                segments.pop(0)
+            prompt = segments[0][:n]
+            if fast_start_all:
+                prompt = prompt + segments[1]
+                segments.clear()
                 response.end_of_segment = True
-            seq[1] += len(prompts[-1])
+                response.end_of_prompt = True
+            else:
+                segments[0] = segments[0][n:]
+                if len(segments[0]) == 0:
+                    segments.pop(0)
+                    response.end_of_segment = True
+            prompts.append(prompt)
+            seq[1] += len(prompt)
             response.progress = (seq[1], seq[2])
             prompt_responses.append(response)
 
         self._prompt_tokens_counter += sum(len(p) for p in prompts)
         tic = time.perf_counter()
-        self._prompt_batch.prompt(prompts)
+        next_tokens = self._prompt_batch.prompt(
+            prompts, return_next_tokens=fast_start_all
+        )
         toc = time.perf_counter()
         self._prompt_time_counter += toc - tic
+
+        if fast_start_all:
+            gen_batch = self._prompt_batch.start_generation(next_tokens)
+            self._currently_processing = []
+            self._generation_batch.extend(gen_batch)
 
         return prompt_responses, generation_responses
 
