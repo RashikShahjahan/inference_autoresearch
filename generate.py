@@ -1124,6 +1124,202 @@ class BatchResponse:
     caches: Optional[List[List[Any]]]
 
 
+def _greedy_batch_generate_fast(
+    model: nn.Module,
+    tokenizer: PreTrainedTokenizer,
+    prompts: List[List[int]],
+    max_tokens: Union[int, List[int]],
+) -> BatchResponse:
+    num_samples = len(prompts)
+    stats = BatchStats()
+    if num_samples == 0:
+        return BatchResponse([], [], stats, None)
+
+    if isinstance(max_tokens, int):
+        max_tokens = [max_tokens] * num_samples
+
+    language_model, text_model = _translategemma_parts(model)
+    stop_tokens = set(tokenizer.eos_token_ids)
+    results = [[] for _ in prompts]
+    num_tokens = [0] * num_samples
+
+    old_wired_limit = None
+    if mx.metal.is_available():
+        old_wired_limit = mx.set_wired_limit(
+            mx.device_info()["max_recommended_working_set_size"]
+        )
+
+    try:
+        with mx.stream(generation_stream):
+            prompt_cache = []
+            active_uids = []
+            current_tokens = None
+            prompt_order = sorted(range(num_samples), key=lambda i: len(prompts[i]))
+            prompt_batch_size = 8
+            prompt_groups = [
+                prompt_order[start : start + prompt_batch_size]
+                for start in range(0, num_samples, prompt_batch_size)
+            ]
+            steps = 0
+
+            def prefill_group(batch_uids):
+                batch_prompts = [prompts[uid] for uid in batch_uids]
+                lengths = [len(p) for p in batch_prompts]
+                batch_cache = _merge_caches(
+                    [cache.make_prompt_cache(model) for _ in batch_prompts]
+                )
+                tic = time.perf_counter()
+
+                if len(set(lengths)) == 1:
+                    inputs = mx.array(batch_prompts)
+                    logits = _translategemma_logits(
+                        language_model,
+                        text_model,
+                        inputs,
+                        batch_cache,
+                        lengths=lengths,
+                    )
+                    next_tokens = mx.argmax(logits, axis=-1)
+                    mx.eval([c.state for c in batch_cache], next_tokens)
+                    stats.prompt_time += time.perf_counter() - tic
+                    stats.prompt_tokens += sum(lengths)
+                    mx.clear_cache()
+                    return batch_cache, next_tokens
+
+                prefix_prompts = [p[:-1] for p in batch_prompts]
+                prefix_lengths = [len(p) for p in prefix_prompts]
+                max_prefix_length = max(prefix_lengths)
+                if max_prefix_length > 0:
+                    padding = [max_prefix_length - length for length in prefix_lengths]
+                    if max(padding) > 0:
+                        inputs = _right_pad_prompts(
+                            prefix_prompts, max_length=max_prefix_length
+                        )
+                        for c in batch_cache:
+                            c.prepare(lengths=prefix_lengths, right_padding=padding)
+                    else:
+                        inputs = mx.array(prefix_prompts)
+
+                    _translategemma_prefill(text_model, inputs, batch_cache)
+
+                    if max(padding) > 0:
+                        for c in batch_cache:
+                            c.finalize()
+                    mx.eval([c.state for c in batch_cache])
+
+                stats.prompt_time += time.perf_counter() - tic
+                stats.prompt_tokens += sum(lengths)
+                mx.clear_cache()
+                return batch_cache, None
+
+            def prime_group(batch_cache, batch_uids):
+                batch_prompts = [prompts[uid] for uid in batch_uids]
+                tic = time.perf_counter()
+                last_tokens = mx.array([p[-1] for p in batch_prompts])
+                logits = _translategemma_logits(
+                    language_model,
+                    text_model,
+                    last_tokens[:, None],
+                    batch_cache,
+                )
+                next_tokens = mx.argmax(logits, axis=-1)
+                mx.eval([c.state for c in batch_cache], next_tokens)
+                stats.generation_time += time.perf_counter() - tic
+                mx.clear_cache()
+                return next_tokens
+
+            def generation_step():
+                nonlocal active_uids, current_tokens, prompt_cache, steps
+                if not active_uids:
+                    return
+
+                tic = time.perf_counter()
+                logits = _translategemma_logits(
+                    language_model,
+                    text_model,
+                    current_tokens[:, None],
+                    prompt_cache,
+                )
+                sampled = mx.argmax(logits, axis=-1)
+                mx.async_eval(sampled)
+
+                mx.eval(current_tokens)
+                token_values = current_tokens.tolist()
+                stats.generation_time += time.perf_counter() - tic
+
+                keep = []
+                for i, token in enumerate(token_values):
+                    uid = active_uids[i]
+                    stats.generation_tokens += 1
+                    num_tokens[uid] += 1
+                    if token in stop_tokens:
+                        continue
+                    results[uid].append(token)
+                    if num_tokens[uid] < max_tokens[uid]:
+                        keep.append(i)
+
+                if len(keep) < len(active_uids):
+                    if not keep:
+                        active_uids = []
+                        prompt_cache = []
+                        current_tokens = None
+                        return
+                    for c in prompt_cache:
+                        c.filter(keep)
+                    sampled = sampled[keep]
+                    active_uids = [active_uids[i] for i in keep]
+
+                current_tokens = sampled
+                steps += 1
+                if steps % 512 == 0:
+                    mx.clear_cache()
+
+            def extend_generation(batch_cache, next_tokens, batch_uids):
+                nonlocal active_uids, current_tokens, prompt_cache
+                if active_uids:
+                    prompt_cache = _extend_cache(prompt_cache, batch_cache)
+                    current_tokens = mx.concatenate([current_tokens, next_tokens], axis=0)
+                else:
+                    prompt_cache = batch_cache
+                    current_tokens = next_tokens
+                active_uids.extend(batch_uids)
+
+            first_group = prompt_groups[0]
+            batch_cache, next_tokens = prefill_group(first_group)
+            if next_tokens is None:
+                next_tokens = prime_group(batch_cache, first_group)
+            extend_generation(batch_cache, next_tokens, first_group)
+
+            for batch_uids in prompt_groups[1:]:
+                generation_step()
+                batch_cache, next_tokens = prefill_group(batch_uids)
+                if next_tokens is None:
+                    generation_step()
+                    next_tokens = prime_group(batch_cache, batch_uids)
+                extend_generation(batch_cache, next_tokens, batch_uids)
+
+            while active_uids:
+                generation_step()
+
+            mx.synchronize(generation_stream)
+            stats.prompt_tps = (
+                stats.prompt_tokens / stats.prompt_time if stats.prompt_time else 0
+            )
+            stats.generation_tps = (
+                stats.generation_tokens / stats.generation_time
+                if stats.generation_time
+                else 0
+            )
+            stats.peak_memory = mx.get_peak_memory() / 1e9
+    finally:
+        if old_wired_limit is not None:
+            mx.synchronize(generation_stream)
+            mx.set_wired_limit(old_wired_limit)
+
+    texts = [tokenizer.decode(tokens) for tokens in results]
+    return BatchResponse(results, texts, stats, None)
+
+
 def batch_generate(
     model: nn.Module,
     tokenizer: PreTrainedTokenizer,
@@ -1150,6 +1346,16 @@ def batch_generate(
     Returns:
         BatchResponse with decoded texts, stats, and optional caches.
     """
+    if (
+        prompt_caches is None
+        and not return_prompt_caches
+        and not verbose
+        and not kwargs
+        and all(len(p) > 0 for p in prompts)
+        and max((len(p) for p in prompts), default=0) <= 2048
+    ):
+        return _greedy_batch_generate_fast(model, tokenizer, prompts, max_tokens)
+
     gen = BatchGenerator(
         model,
         stop_tokens=[[t] for t in tokenizer.eos_token_ids],
