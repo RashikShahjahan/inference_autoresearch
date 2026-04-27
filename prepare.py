@@ -15,7 +15,9 @@ STATE_DIR = ROOT / "state"
 INCUMBENT_PATH = STATE_DIR / "best_generate.py"
 RESULTS_HEADER = (
     "run_id\tcandidate_hash\tincumbent_hash\tmlx_lm_tps\tcandidate_tps\t"
-    "incumbent_tps\tpeak_metal_mb\tstatus\tdescription\n"
+    "incumbent_tps\tmlx_lm_chrf\tcandidate_chrf\tincumbent_chrf\t"
+    "mlx_lm_peak_metal_mb\tcandidate_peak_metal_mb\tincumbent_peak_metal_mb\t"
+    "status\tdecision_reason\tdescription\n"
 )
 SUPPORTED_MODEL_FAMILY = "translategemma"
 
