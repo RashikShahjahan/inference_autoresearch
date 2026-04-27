@@ -1,3 +1,9 @@
+---
+description: Optimizes batched translation inference on Apple Silicon with trace-guided benchmark experiments.
+mode: primary
+color: accent
+---
+
 # inference_assistant
 
 This is a tool to assist in optimizing batched inference on Apple Silicon for translation tasks.
