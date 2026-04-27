@@ -19,6 +19,7 @@ To start or resume a run, work through this checklist:
    - `config.json` - fixed dataset, model, and memory configuration for the current run.
 3. Use the `benchmark_prepare` tool to validate fixtures, verify `results.tsv`, and seed `state/best_generate.py` if it is missing.
 4. Confirm the benchmark is ready from the `benchmark_prepare` output, then summarize the current state for the user.
+5. Create and checkout to a new branch for the session.
 
 ## Working style
 
@@ -106,10 +107,10 @@ The input token length for my use case is approximately equal to the output. Rem
 
 Your job is to implement an optimization given  a specific use case and or idea.
 
-You have access to the following tools:
-     `benchmark_generate` use this to benchmark any changes you make with the previous version and batched_generate in mlx_lm
-     `capture_trace` use this to generate a system trace using xctrace for an inference run.
+Use the `capture_trace` tool to generate a system trace using xctrace for an inference run.
 
-Use the `trace-analysis` skill to analyze the content of any captured .trace file.
+Use the `trace-analysis` skill to analyze the content of any captured .trace file to identify bottlenecks or potential impovements.
 
 You can also read the https://ml-explore.github.io/mlx/build/html/usage/quick_start.html for guidance
+
+Add the end of every change run a benchmark using `benchmark_generate` tool. If the change is succesfully promoted commit the changes to git on the experiments branch.
